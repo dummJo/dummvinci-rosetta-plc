@@ -76,6 +76,41 @@ def test_plcopen_and_scl():
     scl = emit_scl(st)
     assert "FUNCTION_BLOCK" in scl
 
+def test_no_safety_false_positive_on_process_sample():
+    # The centrifugal golden sample has NO safety-instrumented function.
+    # H11 must not fire on it (brake/limit-switch/reset are process terms).
+    f = flag_semantics(_prog())
+    assert f["summary"]["safety_boundary"] is False
+    assert not [fl for fl in f["flags"]
+                if fl["code"] == "H11-SAFETY-BOUNDARY"]
+
+def _safety_prog():
+    src = (pathlib.Path(__file__).resolve().parents[1] /
+           "samples/marine_crane_safety_excerpt.il").read_text()
+    return parse_melsec_il(src, name="CRANE")
+
+def test_safety_boundary_detected():
+    f = flag_semantics(_safety_prog())
+    codes = {fl["code"] for fl in f["flags"]}
+    assert "H11-SAFETY-BOUNDARY" in codes
+    assert f["summary"]["safety_boundary"] is True
+    # e-stop, overload/load-moment, anti-two-block, overhoist, watchdog
+    cats = set(f["summary"]["safety_categories"])
+    assert "emergency-stop" in cats
+    assert "crane-load-safety" in cats
+    assert "watchdog" in cats
+    # every H11 is a BLOCKER, and the verdict names the boundary
+    assert all(fl["severity"] == "BLOCKER" for fl in f["flags"]
+               if fl["code"] == "H11-SAFETY-BOUNDARY")
+    assert "SAFETY BOUNDARY HIT" in f["summary"]["verdict"]
+
+def test_safety_banner_in_emitted_st():
+    p = _safety_prog()
+    st = emit_st(p, flag_semantics(p))
+    assert "SAFETY BOUNDARY HIT" in st
+    assert "AC500-S" in st
+    assert "TODO [H11-SAFETY-BOUNDARY" in st
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

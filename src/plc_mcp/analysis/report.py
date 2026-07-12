@@ -48,6 +48,19 @@ def generate_report(prog: Program, project: str = "",
         "",
         f"**Verdict: {f_sum['verdict']}**",
         "",
+    ]
+    if f_sum.get("safety_boundary"):
+        lines += [
+            "> 🛑 **SAFETY BOUNDARY HIT.** Safety-instrumented function(s) "
+            f"detected: {', '.join(f_sum.get('safety_categories', []))}. These "
+            "are **out of scope** for this tool and must be engineered in a "
+            "certified functional-safety toolchain (e.g. ABB AC500-S + "
+            "SM560-S / PROFIsafe) under the IEC 61508/61511 lifecycle. A SIL "
+            "rating is a property of the whole safety loop, not of generated "
+            "code. See `SAFETY.md`.",
+            "",
+        ]
+    lines += [
         f"| Severity | Count |",
         f"|---|---|",
         f"| BLOCKER | {f_sum.get('BLOCKER', 0)} |",

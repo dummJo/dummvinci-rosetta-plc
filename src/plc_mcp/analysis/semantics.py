@@ -19,15 +19,61 @@ This encodes the lessons of the Tsukishima dossier (Section 4):
   H8  Multiple OUT coils on one device  -> scan-order dependency risk.
   H9  Unknown mnemonics                 -> parser gap or exotic instruction.
   H10 RST on wide ranges / FMOV K0      -> bulk memory wipe, guard carefully.
+  H11 SAFETY-RELATED function            -> OUT OF SCOPE. Not a translation
+                                            problem: safety-instrumented
+                                            functions belong in a certified
+                                            functional-safety toolchain, never
+                                            in mechanically-generated code.
+
+Design note on H11 (the safety boundary): this tool does NOT — and must not —
+generate code for safety functions. A SIL rating is a property of the whole
+safety loop (sensor + certified logic solver + final element + proof test) per
+IEC 61508 / IEC 61511, not of a code fragment. When the program touches an
+emergency-stop, overload/load-moment, anti-two-block, guard interlock, watchdog
+or any safety-instrumented function, H11 fires as a BLOCKER and hands the work
+off to a certified path (e.g. ABB AC500-S + SM560-S / PROFIsafe). Detection is
+deliberately conservative — it flags for a human, it never clears.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ..ir import Program, Op, DeviceClass, CONTACT_OPS, CMP_OPS
 from .xref import build_xref
 
 SEVERITY = {"BLOCKER": 3, "MAJOR": 2, "MINOR": 1}
+
+# Safety-function detection patterns (case-insensitive), matched against a
+# device's symbol description and its raw name. Kept SPECIFIC on purpose: a
+# false positive that halts a non-safety rung is cheap; a false negative that
+# lets safety logic slip into mechanical translation is not. Generic process
+# terms ("limit switch", "brake", "reset") are intentionally NOT here — only
+# terms that denote a safety-instrumented function.
+_SAFETY_PATTERNS: list[tuple[str, str]] = [
+    (r"\b(EMERGENCY|E[\s\-]?STOP|ESTOP|EMG|ESD)\b", "emergency-stop"),
+    (r"\b(SAFETY|SAFE\s*TORQUE|STO|SIL[\s\-]?\d?|FAIL[\s\-]?SAFE|"
+     r"PROFISAFE|F[\s\-]?DI|F[\s\-]?DO)\b", "safety-function"),
+    (r"\b(OVER\s*LOAD|OVERLOAD|LOAD\s*MOMENT|LMI|MOPS|AOPS|"
+     r"OVER\s*HOIST|OVERHOIST|ANTI[\s\-]?TWO[\s\-]?BLOCK|TWO[\s\-]?BLOCK|"
+     r"A2B|SLACK\s*ROPE|OVER\s*SPEED|OVERSPEED|OVER\s*TRAVEL|OVERTRAVEL|"
+     r"LOAD\s*CELL|DEAD[\s\-]?MAN|DEADMAN)\b", "crane-load-safety"),
+    (r"\b(LIGHT\s*CURTAIN|MUTING|SAFETY\s*GATE|GUARD\s*DOOR|INTERLOCK|"
+     r"TWO[\s\-]?HAND|ENABLE\s*SWITCH|SAFETY\s*MAT|SAFETY\s*RELAY)\b",
+     "guard-interlock"),
+    (r"\b(WATCH\s*DOG|WATCHDOG|WDT)\b", "watchdog"),
+]
+_SAFETY_RX = [(re.compile(p, re.IGNORECASE), cat) for p, cat in _SAFETY_PATTERNS]
+
+
+def _safety_category(*texts: str) -> str | None:
+    for text in texts:
+        if not text:
+            continue
+        for rx, cat in _SAFETY_RX:
+            if rx.search(text):
+                return cat
+    return None
 
 
 def _flag(code: str, severity: str, step: int, detail: str,
@@ -154,14 +200,55 @@ def flag_semantics(prog: Program) -> dict[str, Any]:
             "Merge into one assignment with OR of both conditions, or "
             "verify intentional last-write-wins behavior."))
 
+    # H11 safety boundary — scan every USED device against safety patterns.
+    safety_categories: set[str] = set()
+    for dev, info in xref["devices"].items():
+        cat = _safety_category(info.get("symbol", ""), dev)
+        if not cat:
+            continue
+        safety_categories.add(cat)
+        steps = list(info.get("reads", [])) + \
+            [w["step"] for w in info.get("writes", [])]
+        first = min(steps) if steps else 0
+        sym = info.get("symbol", "")
+        flags.append(_flag(
+            "H11-SAFETY-BOUNDARY", "BLOCKER", first,
+            f"{dev}{' (' + sym + ')' if sym else ''} matches a "
+            f"safety-instrumented pattern [{cat}]. Safety functions are OUT "
+            f"OF SCOPE for mechanical translation.",
+            "STOP. Do not mechanically translate this function. Route it to a "
+            "CERTIFIED functional-safety toolchain (e.g. ABB AC500-S + "
+            "SM560-S / PROFIsafe) under the IEC 61508/61511 safety lifecycle "
+            "(V-model, FMEDA, independent assessment). The SIL rating is a "
+            "property of the whole loop, not of this code. For marine/offshore "
+            "cranes also satisfy the classification-society rules (DNV / ABS / "
+            "Lloyd's / BV) for the lifting appliance."))
+
     flags.sort(key=lambda f: (-SEVERITY[f["severity"]], f["step"]))
     counts = {s: sum(1 for f in flags if f["severity"] == s) for s in SEVERITY}
+    safety_hit = bool(safety_categories)
+    n_safety = sum(1 for f in flags if f["code"] == "H11-SAFETY-BOUNDARY")
+    if safety_hit:
+        verdict = (
+            f"SAFETY BOUNDARY HIT — {n_safety} safety-related function(s) "
+            f"detected {sorted(safety_categories)}. These are OUT OF SCOPE: "
+            f"hand them to a certified safety toolchain (IEC 61508/61511). "
+            f"Do NOT emit or trust generated code for them. "
+            + ("Also resolve the remaining BLOCKER items before emitting "
+               "final code for the non-safety remainder."
+               if counts["BLOCKER"] > n_safety else
+               "Non-safety remainder may proceed as draft after review."))
+    elif counts["BLOCKER"]:
+        verdict = ("BLOCKED — resolve BLOCKER items before emitting final "
+                   "code")
+    else:
+        verdict = "OK to emit draft code; review MAJOR items"
     return {
         "summary": {
             "total": len(flags), **counts,
-            "verdict": ("BLOCKED — resolve BLOCKER items before emitting "
-                        "final code" if counts["BLOCKER"] else
-                        "OK to emit draft code; review MAJOR items"),
+            "safety_boundary": safety_hit,
+            "safety_categories": sorted(safety_categories),
+            "verdict": verdict,
         },
         "flags": flags,
     }

@@ -76,6 +76,33 @@ badly by hand: exhaustive, tireless, deterministic bookkeeping.
 
 ---
 
+## 🛑 The safety boundary (H11) — read this before any crane / SIL work
+
+**This tool does not generate safety code, and it must never be made to.**
+
+A SIL rating is a property of a whole safety loop — sensor + certified logic
+solver + final element + proof test — under IEC 61508 / IEC 61511. It is *not* a
+property of a code fragment. There is no such thing as "SIL 4 code" that a
+translator can emit. Safety-instrumented functions belong in a **certified**
+safety controller (e.g. ABB **AC500-S** + **SM560-S** / PROFiSAFE) engineered
+through the full safety lifecycle — not in mechanically-generated draft ST.
+
+So the tool draws a hard line. When it detects a safety-instrumented function —
+emergency stop, overload / load-moment (LMI), anti-two-block, overhoist, guard
+interlock, safe-torque-off, watchdog — it raises **`H11-SAFETY-BOUNDARY` as a
+BLOCKER**, stamps the emitted code with a `SAFETY BOUNDARY HIT` banner, and hands
+the function off. Detection is deliberately biased toward false positives: a
+spurious halt costs a review; a missed safety function costs more than money.
+
+> **Marine / offshore cranes are not SIL 4.** Their safety functions (AOPS/MOPS
+> overload, emergency lowering, e-stop) are typically **SIL 2**, governed by
+> classification-society rules (DNV-ST-0378, EN 13852, ABS, Lloyd's, BV). If a
+> spec says "SIL 4" for a crane, review the spec before engineering anything.
+
+Full rationale and the certified hand-off path: **[`SAFETY.md`](./SAFETY.md).**
+
+---
+
 ## The nine tools
 
 The server exposes a pipeline. Each tool is one honest step; they chain through
