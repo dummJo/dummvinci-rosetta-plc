@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "dummvinci-rosetta-plc": {
+      "command": "python",
+      "args": ["-m", "plc_mcp.server"],
+      "env": { "PYTHONPATH": "src" }
+    }
+  }
+}

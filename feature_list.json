@@ -1,0 +1,12 @@
+[
+  {"id":"parse-melsec-a","description":"Parse GX Developer A-series IL text export incl. symbols, compare contacts, applied instructions","verification":["python3 tests/test_pipeline.py :: test_parse_counts"],"passes":true,"evidence":"test_parse_counts PASS v0.2"},
+  {"id":"xref","description":"Device cross-reference with double-coil / write-only / read-only detection","verification":["test_xref_detects_reads_writes"],"passes":true,"evidence":"PASS v0.2"},
+  {"id":"flags-h1-h10","description":"Semantic hazard register H1-H10 with severity + required actions","verification":["test_flags"],"passes":true,"evidence":"PASS v0.2"},
+  {"id":"iomap-ac500","description":"X/Y to AC500 S500 channel mapping with electrical hazard notes","verification":["test_iomap"],"passes":true,"evidence":"PASS v0.2"},
+  {"id":"emit-st","description":"Draft ST: stack-machine eval, TON (K + register presets), CTU, SET/RST/PLS, MOV/math, TODO markers at hazard sites","verification":["test_emit_st_and_lint","test_counter_ctu"],"passes":true,"evidence":"PASS v0.2 (counter bug fixed in 0.2)"},
+  {"id":"emit-plcopen","description":"PLCopen TC6 XML wrapper for Automation Builder import","verification":["test_plcopen_and_scl"],"passes":true,"evidence":"PASS v0.2; NOT yet validated against real AB import"},
+  {"id":"emit-scl-seed","description":"Siemens SCL external-source skeleton","verification":["test_plcopen_and_scl"],"passes":false,"evidence":"emits, but timer instancing manual; Phase 3"},
+  {"id":"report","description":"Markdown migration analysis report with BLOCKER sign-off table","verification":["test_report"],"passes":true,"evidence":"PASS v0.2"},
+  {"id":"real-export-validation","description":"Parser validated against a REAL GX Developer export from JMR/DSI shutdown","verification":["parse real export with 0 unparsed lines, unknown mnemonics triaged"],"passes":false,"evidence":null},
+  {"id":"ab-import-validation","description":"PLCopen XML validated by actual Automation Builder import","verification":["import in AB 2.x without structural errors"],"passes":false,"evidence":null}
+]
