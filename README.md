@@ -30,7 +30,7 @@ The 20% that ends careers lives one level down, in the **semantic** layer:
   equivalent on the new network. It is not a translation problem. It is a
   redesign.
 
-The Tsukishima-era migration dossiers are full of these. Every one of them is
+Real-world migration dossiers are full of these. Every one of them is
 a place where a naive transpiler produces code that **compiles, downloads, and
 is wrong** — and you find out during cold commissioning, with the machine
 energized.
@@ -172,7 +172,7 @@ client: `initialize` → `list_tools` → `call_tool` round-trips cleanly.
 
 ---
 
-## Typical workflow (JMR / DSI centrifugal retrofit)
+## Typical workflow (centrifugal retrofit pilot)
 
 1. During shutdown, export the A2SH program from GX Developer as a **text list**.
 2. `plc_parse_melsec` → parse summary + symbol table loaded.
@@ -205,7 +205,7 @@ ST emission incl. the `CTU` counter fix · PLCopen/SCL emission · report.
 
 - 🔴 **Real-export validation.** The parser is tested against a crafted
   hazard-dense sample, **not yet against a real GX Developer export** from a live
-  JMR/DSI shutdown. Until it parses a real dump with zero unparsed lines and all
+  plant shutdown. Until it parses a real dump with zero unparsed lines and all
   unknown mnemonics triaged, treat parser coverage as *provisional*.
 - 🔴 **Automation Builder import.** The PLCopen XML is well-formed and
   schema-shaped, but **has not been round-tripped through an actual AB 2.x
@@ -222,7 +222,7 @@ refuses to guess.
 
 ## Roadmap
 
-- **Phase 1 (this repo):** MELSEC A/AnS → AC500 V3. Driven by the DSI/JMR
+- **Phase 1 (this repo):** MELSEC A/AnS → AC500 V3. Driven by the pilot
   4-panel retrofit program.
 - **Phase 2:** CP600 tag-DB generator; FB pattern library (fault latch, valve
   answer-back watchdog, ACS880 Modbus TCP comms block).
@@ -253,7 +253,7 @@ bash   scripts/verify.sh           # tests + server import + py_compile → VERI
 ```
 
 The sample [`samples/centrifugal_excerpt.il`](./samples/centrifugal_excerpt.il)
-deliberately reproduces the hazard patterns from the Tsukishima TSK-E-130-0402
+deliberately reproduces the hazard patterns from a reference legacy-migration
 dossier: reset one-shot, memory-signature check, register-preset timer, an
 `M9037` disabled rung, an `MC` zone, an accumulator pair, an OPCN-1 `TO` block,
 and a 32-bit batch counter. If a change breaks the tool's ability to see any of

@@ -89,8 +89,11 @@ def lint_st(st_code: str) -> dict:
     final authority."""
     import re
     issues, warnings = [], []
-    n_if = len(re.findall(r"\bIF\b", st_code))
-    n_endif = len(re.findall(r"\bEND_IF\b", st_code))
+    # Structural counting must ignore comments — TODO markers legitimately
+    # contain words like IF without END_IF (audit M-2).
+    code_only = re.sub(r"\(\*.*?\*\)", "", st_code, flags=re.S)
+    n_if = len(re.findall(r"\bIF\b", code_only))
+    n_endif = len(re.findall(r"\bEND_IF\b", code_only))
     if n_if != n_endif:
         issues.append(f"IF/END_IF mismatch: {n_if} IF vs {n_endif} END_IF")
     n_var = len(re.findall(r"^\s*VAR(?:\s+RETAIN|_INPUT|_OUTPUT)?\s*$",

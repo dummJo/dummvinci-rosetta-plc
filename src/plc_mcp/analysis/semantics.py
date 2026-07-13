@@ -2,7 +2,7 @@
 
 Finds every construct whose meaning does NOT survive a mechanical
 translation to IEC 61131-3 and emits a [VERIFY]-style assumption register.
-This encodes the lessons of the Tsukishima dossier (Section 4):
+This encodes the lessons of the reference migration dossier:
 
   H1  ALWAYS_OFF contact in series      -> rung can never be true; almost
                                            always a commissioning disable.
@@ -224,6 +224,20 @@ def flag_semantics(prog: Program) -> dict[str, Any]:
             "cranes also satisfy the classification-society rules (DNV / ABS / "
             "Lloyd's / BV) for the lifting appliance."))
 
+    # Audit H-4: H11 screening is symbol-text-driven. A symbol-free export
+    # gives it nothing to see — that is REDUCED coverage, never clearance.
+    screening_limited = len(prog.symbols) == 0
+    if screening_limited:
+        flags.append(_flag(
+            "H11-COVERAGE-UNKNOWN", "MAJOR", 0,
+            "Program has no symbol comments — H11 safety screening is "
+            "text-based and cannot recognize safety functions without "
+            "symbols/names.",
+            "Do NOT treat the absence of H11 flags as safety clearance. "
+            "Obtain the symbol/comment export, or review with the site "
+            "engineer which devices belong to safety-instrumented "
+            "functions before emitting or trusting any code."))
+
     flags.sort(key=lambda f: (-SEVERITY[f["severity"]], f["step"]))
     counts = {s: sum(1 for f in flags if f["severity"] == s) for s in SEVERITY}
     safety_hit = bool(safety_categories)
@@ -243,11 +257,16 @@ def flag_semantics(prog: Program) -> dict[str, Any]:
                    "code")
     else:
         verdict = "OK to emit draft code; review MAJOR items"
+    if screening_limited:
+        verdict = ("H11 SCREENING INCOMPLETE — symbol-free export is NOT "
+                   "cleared for safety; see H11-COVERAGE-UNKNOWN. "
+                   + verdict)
     return {
         "summary": {
             "total": len(flags), **counts,
             "safety_boundary": safety_hit,
             "safety_categories": sorted(safety_categories),
+            "safety_screening_limited": screening_limited,
             "verdict": verdict,
         },
         "flags": flags,

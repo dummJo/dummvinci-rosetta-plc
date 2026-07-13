@@ -62,14 +62,30 @@ def _get_program(program_id: str) -> Program:
     return _STORE[program_id]
 
 
+def _resolve_source(source: str, is_path: bool) -> str:
+    """Resolve the parse input. File reads are an explicit opt-in
+    (audit MED-2): with is_path False the string is ALWAYS literal IL
+    text — never silently promoted to a filesystem read."""
+    if not is_path:
+        return source
+    p = Path(source)
+    if ".." in p.parts:
+        raise ValueError("Refusing path containing '..' segments")
+    return p.read_text(encoding="utf-8", errors="replace")
+
+
 class ParseInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=False, extra="forbid")
     source: str = Field(..., description=(
-        "Either the raw MELSEC instruction-list text, OR a filesystem path "
-        "to the exported .il/.txt file. Paths are detected by existence."))
+        "The raw MELSEC instruction-list text. To read from a file "
+        "instead, set source_is_path=true and pass the path here."))
+    source_is_path: bool = Field(False, description=(
+        "When true, 'source' is treated as a filesystem path to the "
+        "exported .il/.txt ('..' segments rejected). Default false: "
+        "'source' is always literal text, never a file read."))
     program_id: str = Field("MAIN", description=(
         "Identifier to store the parsed program under, for chaining "
-        "(e.g. 'jmr_centrifugal_1')"), min_length=1, max_length=64)
+        "(e.g. 'centrifugal_1')"), min_length=1, max_length=64)
     dialect: str = Field("melsec_a", description=(
         "Source dialect: 'melsec_a' (A/AnS series) or 'melsec_q'"))
 
@@ -83,13 +99,7 @@ async def plc_parse_melsec(params: ParseInput) -> str:
     program_id for use by the other tools. Supports [SYMBOLS] sections,
     inline comments, compare contacts (LD= ...), applied instructions.
     Unknown mnemonics are preserved and surfaced — never dropped."""
-    text = params.source
-    p = Path(params.source)
-    try:
-        if len(params.source) < 512 and p.exists():
-            text = p.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        pass
+    text = _resolve_source(params.source, params.source_is_path)
     prog = parse_melsec_il(text, name=params.program_id,
                            dialect=params.dialect)
     _STORE[params.program_id] = prog
@@ -114,7 +124,7 @@ async def plc_device_xref(params: ProgramRef) -> str:
     """Build the full device cross-reference: for every device, where it is
     read, written (OUT/SET/RST/MOV...), symbol name, plus automatic
     detection of double coils, write-only and read-only-never-written
-    devices. This is the table the Tsukishima dossier Section 2.1 was built
+    devices. This is the table the reference migration dossier was built
     from — automated."""
     return json.dumps(build_xref(_get_program(params.program_id)), indent=2)
 

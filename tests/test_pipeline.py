@@ -63,7 +63,7 @@ def test_counter_ctu():
 def test_report():
     from plc_mcp.analysis.report import generate_report
     p = _prog()
-    rep = generate_report(p, project="JMR test")
+    rep = generate_report(p, project="pilot test")
     assert "hazard register" in rep.lower()
     assert "H1-ALWAYS-OFF-SERIES" in rep
     assert "Sign-off" in rep
@@ -110,6 +110,77 @@ def test_safety_banner_in_emitted_st():
     assert "SAFETY BOUNDARY HIT" in st
     assert "AC500-S" in st
     assert "TODO [H11-SAFETY-BOUNDARY" in st
+
+# ---- Phase 0 regressions (audit 2026-07-13) -------------------------------
+
+def test_anb_block_combine():
+    # audit H-1: (X0 OR X1) AND (X2 OR X3) via ANB must stay ONE network
+    il = "0 LD X0\n1 OR X1\n2 LD X2\n3 OR X3\n4 ANB\n5 OUT Y10\n"
+    p = parse_melsec_il(il)
+    assert p.meta["rung_count"] == 1
+    st = emit_st(p)
+    assert "xDO_Y10 := ((xDI_X0 OR xDI_X1) AND (xDI_X2 OR xDI_X3));" in st
+
+def test_orb_block_combine():
+    # (X0 AND X1) OR (X2 AND X3)
+    il = "0 LD X0\n1 AND X1\n2 LD X2\n3 AND X3\n4 ORB\n5 OUT Y11\n"
+    st = emit_st(parse_melsec_il(il))
+    assert "xDO_Y11 := ((xDI_X0 AND xDI_X1) OR (xDI_X2 AND xDI_X3));" in st
+
+def test_mps_branch_conditions():
+    # audit H-2: every branch output gets ITS OWN condition
+    il = ("0 LD X0\n1 MPS\n2 AND X1\n3 OUT Y10\n4 MRD\n5 AND X2\n"
+          "6 OUT Y11\n7 MPP\n8 AND X3\n9 OUT Y12\n")
+    st = emit_st(parse_melsec_il(il))
+    assert "xDO_Y10 := (xDI_X0 AND xDI_X1);" in st
+    assert "xDO_Y11 := (xDI_X0 AND xDI_X2);" in st
+    assert "xDO_Y12 := (xDI_X0 AND xDI_X3);" in st
+
+def test_rst_counter_timer_register():
+    # audit H-3: RST semantics per device class
+    il = ("0 LD X0\n1 OUT C10 D279\n2 LD X1\n3 RST C10\n"
+          "4 LD X2\n5 RST T40\n6 LD X3\n7 RST D100\n")
+    st = emit_st(parse_melsec_il(il))
+    assert "RESET := xRstC10" in st           # CTU reset wired
+    assert "xRstC10 := xDI_X1;" in st         # helper assigned at RST rung
+    assert "cC10.Q := FALSE" not in st        # old invalid output gone
+    assert "TODO [RST-TIMER] RST T40" in st   # timer: honest TODO
+    assert "tT40.Q := FALSE" not in st
+    assert "IF xDI_X3 THEN D100 := 0; END_IF;" in st  # register := 0
+
+def test_symbol_free_h11_screening_limited():
+    # audit H-4: no symbols => H11 must NOT read as clearance
+    il = "0 LD X10\n1 AND X11\n2 OUT M100\n"
+    f = flag_semantics(parse_melsec_il(il))
+    assert f["summary"]["safety_screening_limited"] is True
+    assert "H11-COVERAGE-UNKNOWN" in {fl["code"] for fl in f["flags"]}
+    assert f["summary"]["verdict"].startswith("H11 SCREENING INCOMPLETE")
+    # and the golden sample (with symbols) is NOT limited
+    assert flag_semantics(_prog())["summary"][
+        "safety_screening_limited"] is False
+
+def test_iomap_nonhex_token_no_crash():
+    # audit M-1: symbolic X token must not abort the whole mapping
+    il = "0 LD XRUN\n1 AND X1F\n2 OUT Y0\n"
+    m = map_io(parse_melsec_il(il))
+    unmapped = [r for r in m["mapping"] if r["module"] == "UNMAPPED"]
+    assert any(r["legacy"] == "XRUN" for r in unmapped)
+    assert any(r["legacy"] == "X1F" and r["direction"] == "DI"
+               for r in m["mapping"])
+
+def test_device_parse_bad_number_no_crash():
+    # audit M-3: hex letters on a base-10 device class must not raise
+    from plc_mcp.ir import Device, DeviceClass
+    d = Device.parse("D1A")
+    assert d.dclass == DeviceClass.UNKNOWN and d.raw == "D1A"
+
+def test_lint_ignores_if_inside_comments():
+    # audit M-2: TODO comments containing 'IF' must not trip the lint
+    il = "0 LD M9036\n1 FMOV K0 D100 K8\n"
+    p = parse_melsec_il(il)
+    st = emit_st(p, flag_semantics(p))
+    res = lint_st(st)
+    assert res["ok"] is True, res["issues"]
 
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
