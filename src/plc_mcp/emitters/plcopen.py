@@ -20,7 +20,7 @@ def emit_plcopen_xml(st_code: str, pou_name: str = "PRG_Converted",
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <project xmlns="http://www.plcopen.org/xml/tc6_0200">
   <fileHeader companyName="PTTS" productName="dummvinci-rosetta-plc"
-              productVersion="0.2" creationDateTime="{now}"/>
+              productVersion="0.3" creationDateTime="{now}"/>
   <contentHeader name="{escape(project_name)}" modificationDateTime="{now}">
     <coordinateInfo>
       <fbd><scaling x="1" y="1"/></fbd>
@@ -96,9 +96,10 @@ def lint_st(st_code: str) -> dict:
     n_endif = len(re.findall(r"\bEND_IF\b", code_only))
     if n_if != n_endif:
         issues.append(f"IF/END_IF mismatch: {n_if} IF vs {n_endif} END_IF")
-    n_var = len(re.findall(r"^\s*VAR(?:\s+RETAIN|_INPUT|_OUTPUT)?\s*$",
-                           st_code, re.M))
-    n_endvar = len(re.findall(r"\bEND_VAR\b", st_code))
+    n_var = len(re.findall(
+        r"^\s*VAR(?:\s+RETAIN|_INPUT|_OUTPUT|_IN_OUT)?\s*$",
+        code_only, re.M))
+    n_endvar = len(re.findall(r"\bEND_VAR\b", code_only))
     if n_var != n_endvar:
         issues.append(f"VAR/END_VAR mismatch: {n_var} vs {n_endvar}")
     todos = re.findall(r"\(\* ?TODO \[(H\d+[^\]]*)\]", st_code)

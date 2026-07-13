@@ -103,7 +103,7 @@ Full rationale and the certified hand-off path: **[`SAFETY.md`](./SAFETY.md).**
 
 ---
 
-## The nine tools
+## The migration pipeline — nine tools
 
 The server exposes a pipeline. Each tool is one honest step; they chain through
 an in-memory program store keyed by `program_id`, so you never re-pass megabytes
@@ -142,7 +142,50 @@ This is the heart of the tool — the codified memory of what goes wrong.
 
 `plc_flag_semantics` returns a verdict: if any BLOCKER exists, the register
 reads **"BLOCKED — resolve BLOCKER items before emitting final code."** The tool
-enforces its own discipline.
+enforces its own discipline. One honest limit, stated loudly: H11 screening is
+symbol-text-driven — a **symbol-free export raises `H11-COVERAGE-UNKNOWN`** and
+is never treated as cleared.
+
+---
+
+## 📚 The engineering library — four more tools
+
+Beyond migration, the server ships a curated library for the hard recurring
+asks: **standards-grade alarm/event/fault handling and a sequence-of-events
+historian** (German practice: Meldeklassen Störung/Warnung/Meldung, IEC 62682 /
+ISA-18.2 alarm states, NAMUR NE 107 device diagnostics, VDI/VDE 3699 display
+conventions). Concepts live in [`docs/library/ALARM-PHILOSOPHY.md`](./docs/library/ALARM-PHILOSOPHY.md)
+and [`docs/library/HISTORIAN-DESIGN.md`](./docs/library/HISTORIAN-DESIGN.md) —
+read them before designing; the patterns implement them.
+
+**ST patterns** (package data, lint-clean, draft-quality by declaration):
+
+| Pattern | What it is |
+|---|---|
+| `FB_AlarmPoint` | IEC 62682 alarm state machine: NORM → UNACK_ALM → ACK_ALM → UNACK_RTN, on/off delays, latching, priority, class |
+| `FB_AlarmManager` | N-point aggregation: first-out capture (Erstwertmeldung), per-class counts, horn + group ack |
+| `FB_FaultLatch` | Lightweight fault latch with shared first-out group flag |
+| `FB_EventLogger` | SoE ring-buffer historian: stamped APPEARED/DISAPPEARED/ACKED records, retained, wrap-honest |
+| `FB_CommsWatchdog` | Link supervision via heartbeat — **diagnostics only, explicitly not a safety watchdog** |
+| `FB_DriveDiagACS880` | ACS880 fault/warning capture → hex code keys into the catalog |
+
+**Error-code catalog** — code → Meldeklasse, EN/DE text, cause, **remedy
+(how-to-fix)**, provenance. Runs on a no-fabrication policy
+([`catalog/README.md`](./src/plc_mcp/library/catalog/README.md)): every entry
+carries provenance, seeded entries stay `verified: false` until checked against
+the firmware manual for the installed revision, and **unknown codes are refused
+with a pointer to Drive Composer Pro / the manual — never guessed.**
+
+| Tool | Does |
+|---|---|
+| `plc_lib_list` | list patterns + catalogs (+ verification status) |
+| `plc_lib_get` | fetch one pattern's full ST source + usage header |
+| `plc_errorcode_lookup` | code → cause/remedy, or an explicit refusal |
+| `plc_gen_alarm_bundle` | JSON alarm list → wired FB_AlarmPoint/Manager ST draft + catalog stubs |
+
+The safety boundary is unchanged: e-stop chains, overload cutouts and
+interlocks are **not alarm points** — only their *status* is annunciated;
+the functions themselves live on the certified safety CPU (H11 / SAFETY.md).
 
 ---
 
@@ -166,7 +209,7 @@ Add to your project `.mcp.json` (or `claude mcp add`):
 }
 ```
 
-The server speaks MCP over stdio and advertises all nine tools with correct
+The server speaks MCP over stdio and advertises all thirteen tools with correct
 read-only / non-destructive annotations. Verified against the reference MCP
 client: `initialize` → `list_tools` → `call_tool` round-trips cleanly.
 
@@ -197,7 +240,7 @@ This project refuses to overstate itself. Status is tracked in
 only with **recorded evidence** (a named test or command output), never on
 inspection alone.
 
-**Verified (v0.2 — 8/8 tests, `scripts/verify.sh` = VERIFY OK):**
+**Verified (v0.3 — 25/25 tests, `scripts/verify.sh` = VERIFY OK):**
 parser (counts, symbols, compare contacts) · xref · H1–H10 flagging · I/O map ·
 ST emission incl. the `CTU` counter fix · PLCopen/SCL emission · report.
 
@@ -248,7 +291,7 @@ refuses to guess.
 ## Tests
 
 ```bash
-python tests/test_pipeline.py      # 8 named checks, all must PASS
+python tests/test_pipeline.py      # 25 named checks, all must PASS
 bash   scripts/verify.sh           # tests + server import + py_compile → VERIFY OK
 ```
 

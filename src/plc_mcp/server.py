@@ -1,20 +1,30 @@
 """dummvinci-rosetta-plc — MCP server for cross-vendor PLC migration engineering.
 
-Tools (Phase 1, production path Mitsubishi MELSEC -> ABB AC500 V3):
+Migration tools (production path Mitsubishi MELSEC -> ABB AC500 V3):
 
   plc_parse_melsec       IL text export -> IR JSON
   plc_device_xref        IR -> cross-reference table
-  plc_flag_semantics     IR -> [VERIFY] assumption register
+  plc_flag_semantics     IR -> [VERIFY] assumption register (H1-H11)
   plc_map_io             IR -> AC500 S500 channel mapping proposal
   plc_emit_st            IR -> draft IEC 61131-3 ST (AC500/CODESYS)
   plc_emit_plcopen_xml   ST -> PLCopen TC6 XML for Automation Builder
   plc_emit_scl           ST -> Siemens SCL external source (Phase 3 seed)
   plc_lint_st            structural lint of generated code
+  plc_generate_report    markdown migration report + BLOCKER sign-off
+
+Engineering library tools (alarm/event/fault + historian, IEC 62682 /
+NAMUR NE 107 / Meldeklassen — see docs/library/):
+
+  plc_lib_list           list ST patterns + error-code catalogs
+  plc_lib_get            fetch one ST pattern with usage header
+  plc_errorcode_lookup   code -> class/text/cause/remedy (refuses unknown)
+  plc_gen_alarm_bundle   alarm point list -> ST bundle + catalog stubs
 
 Design contract: deterministic/mechanical work lives here; semantic
 judgment stays with the engineer + AI. The server never resolves an
 ALWAYS_OFF rung, an MC/MCR zone, or a TO/FROM fieldbus block on its own —
-it flags them.
+it flags them. Safety-instrumented functions are out of scope entirely
+(H11 / SAFETY.md).
 """
 from __future__ import annotations
 
@@ -33,6 +43,7 @@ from .analysis.iomap import map_io, DEFAULT_PROFILE
 from .analysis.report import generate_report
 from .emitters.st import emit_st
 from .emitters.plcopen import emit_plcopen_xml, emit_scl, lint_st
+from . import library as lib
 
 mcp = FastMCP("dummvinci-rosetta-plc")
 
@@ -247,6 +258,103 @@ async def plc_generate_report(params: ReportInput) -> str:
     prog = _get_program(params.program_id)
     return generate_report(prog, project=params.project,
                            prepared_by=params.prepared_by)
+
+
+class EmptyInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+@mcp.tool(name="plc_lib_list", annotations={
+    "title": "List engineering-library content", "readOnlyHint": True,
+    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+async def plc_lib_list(params: EmptyInput) -> str:
+    """List the engineering library: IEC 61131-3 ST patterns (alarm state
+    machine per IEC 62682, alarm manager with first-out, SoE event-logger
+    historian, comms watchdog, ACS880 diagnostics) and the error-code
+    catalogs with their verification status. Concepts are documented in
+    docs/library/ALARM-PHILOSOPHY.md and HISTORIAN-DESIGN.md — read those
+    before designing alarm/event handling."""
+    return json.dumps({
+        "patterns": lib.list_patterns(),
+        "catalogs": lib.list_catalogs(),
+        "docs": ["docs/library/ALARM-PHILOSOPHY.md",
+                 "docs/library/HISTORIAN-DESIGN.md"],
+        "note": ("Patterns are drafts: review + FAT mandatory. NOT for "
+                 "safety-instrumented functions (SAFETY.md / H11)."),
+    }, indent=2)
+
+
+class LibGetInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(..., description=(
+        "Pattern name from plc_lib_list, e.g. 'FB_AlarmPoint'"),
+        min_length=1, max_length=64)
+
+
+@mcp.tool(name="plc_lib_get", annotations={
+    "title": "Get an ST library pattern", "readOnlyHint": True,
+    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+async def plc_lib_get(params: LibGetInput) -> str:
+    """Fetch one library pattern's full IEC 61131-3 ST source, including
+    its usage header (standard basis, wiring instructions, disclaimers)."""
+    src = lib.get_pattern(params.name)
+    if src is None:
+        return json.dumps({
+            "found": False,
+            "available": [p["name"] for p in lib.list_patterns()]})
+    return src
+
+
+class CodeLookupInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source: str = Field(..., description=(
+        "Catalog source from plc_lib_list, e.g. 'acs880'"),
+        min_length=1, max_length=32)
+    code: str = Field(..., description=(
+        "Code as displayed by the device, e.g. '2310' or 'A5A0'"),
+        min_length=1, max_length=16)
+
+
+@mcp.tool(name="plc_errorcode_lookup", annotations={
+    "title": "Error-code lookup (cause + remedy)", "readOnlyHint": True,
+    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+async def plc_errorcode_lookup(params: CodeLookupInput) -> str:
+    """Look up an error/fault/warning code: Meldeklasse, bilingual EN/DE
+    text, cause, remedy, provenance, and verification status. REFUSES
+    codes that are not in the catalog — fault codes are a low-trust
+    domain, so unknown codes are routed to the authoritative source
+    (Drive Composer Pro / firmware manual), never guessed."""
+    return json.dumps(lib.lookup_code(params.source, params.code), indent=2)
+
+
+class AlarmBundleInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    points_json: str = Field(..., description=(
+        "JSON array of alarm points: [{tag, class: FAULT|WARNING|EVENT, "
+        "priority: 1-4, code, text_en, text_de, on_delay_ms, off_delay_ms, "
+        "latching}]"))
+    pou_name: str = Field("PRG_Alarms", max_length=64)
+
+
+@mcp.tool(name="plc_gen_alarm_bundle", annotations={
+    "title": "Generate alarm-handling ST bundle", "readOnlyHint": True,
+    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+async def plc_gen_alarm_bundle(params: AlarmBundleInput) -> str:
+    """Generate a draft ST program wiring FB_AlarmPoint instances into
+    FB_AlarmManager from a JSON alarm list (deterministic codegen), plus
+    catalog stub entries for the codes. Every xIn is an explicit TODO —
+    condition wiring is engineering judgment, not codegen."""
+    try:
+        points = json.loads(params.points_json)
+    except json.JSONDecodeError as exc:
+        return json.dumps({"ok": False, "errors": [f"bad JSON: {exc}"]})
+    if not isinstance(points, list):
+        return json.dumps({"ok": False,
+                           "errors": ["points_json must be a JSON array"]})
+    result = lib.gen_alarm_bundle(points, pou_name=params.pou_name)
+    if result.get("ok"):
+        result["lint"] = lint_st(result["st_code"])
+    return json.dumps(result, indent=2)
 
 
 def main() -> None:

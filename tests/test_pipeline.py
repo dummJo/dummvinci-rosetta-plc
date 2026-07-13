@@ -182,6 +182,95 @@ def test_lint_ignores_if_inside_comments():
     res = lint_st(st)
     assert res["ok"] is True, res["issues"]
 
+# ---- Engineering library (v0.3) -------------------------------------------
+
+def test_library_patterns_list_and_get():
+    from plc_mcp import library as lib
+    names = {p["name"] for p in lib.list_patterns()}
+    assert {"FB_AlarmPoint", "FB_AlarmManager", "FB_FaultLatch",
+            "FB_EventLogger", "FB_CommsWatchdog",
+            "FB_DriveDiagACS880"} <= names
+    src = lib.get_pattern("FB_AlarmPoint")
+    assert src and "IEC 62682" in src and "FUNCTION_BLOCK FB_AlarmPoint" in src
+    assert lib.get_pattern("nope") is None
+    assert lib.get_pattern("../catalog/acs880") is None  # traversal guard
+
+def test_library_patterns_are_lint_clean():
+    from plc_mcp import library as lib
+    for p in lib.list_patterns():
+        res = lint_st(lib.get_pattern(p["name"]))
+        assert res["ok"] is True, (p["name"], res["issues"])
+
+def test_catalog_schema_and_provenance_policy():
+    import json as _json, pathlib as _pl
+    from plc_mcp import library as lib
+    cats = lib.list_catalogs()
+    assert any(c["source"] == "acs880" for c in cats)
+    cat = lib.load_catalog("acs880")
+    for e in cat["entries"]:
+        for req in ("code", "kind", "class", "name", "text_en", "text_de",
+                    "cause", "remedy", "verified"):
+            assert req in e, (e.get("code"), req)
+        assert e["class"] in ("FAULT", "WARNING", "EVENT")
+        assert e["kind"] in ("fault", "warning", "event")
+        # seeded entries must NOT claim verification
+        assert e["verified"] is False
+    assert cat["provenance_default"]
+    # schema file itself is valid JSON
+    root = _pl.Path(__file__).resolve().parents[1]
+    _json.loads((root / "src/plc_mcp/library/catalog/schema.json"
+                 ).read_text())
+
+def test_errorcode_lookup_known_and_refusal():
+    from plc_mcp import library as lib
+    hit = lib.lookup_code("acs880", "2310")
+    assert hit["found"] is True
+    assert hit["entry"]["remedy"]
+    assert "UNVERIFIED" in hit["verification_status"]
+    # unknown code -> refusal, not a guess
+    miss = lib.lookup_code("acs880", "FFFF")
+    assert miss["found"] is False and "refus" in miss["refusal"].lower()
+    assert "Drive Composer" in miss["action"]
+    # unknown source -> refusal with available sources
+    bad = lib.lookup_code("nonexistent", "1")
+    assert bad["found"] is False and "acs880" in bad["available_sources"]
+
+def test_gen_alarm_bundle_lints_clean():
+    from plc_mcp import library as lib
+    pts = [
+        {"tag": "MOTOR_OVERTEMP", "class": "FAULT", "priority": 4,
+         "code": "4310", "text_en": "Motor overtemperature",
+         "text_de": "Motoruebertemperatur", "on_delay_ms": 500,
+         "latching": True},
+        {"tag": "FILTER_DP_HIGH", "class": "WARNING", "priority": 2,
+         "code": "", "text_en": "Filter dP high",
+         "text_de": "Filterdifferenzdruck hoch", "on_delay_ms": 2000},
+    ]
+    out = lib.gen_alarm_bundle(pts)
+    assert out["ok"] is True and out["points"] == 2
+    st = out["st_code"]
+    assert "fbAlm_MOTOR_OVERTEMP : FB_AlarmPoint;" in st
+    assert "diCode := 16#4310" in st
+    assert "fbMgr(nPoints := 2" in st
+    assert lint_st(st)["ok"] is True, lint_st(st)["issues"]
+    # catalog stub only for points WITH a code
+    assert len(out["catalog_stubs"]) == 1
+    assert out["catalog_stubs"][0]["verified"] is False
+    # validation errors surface, not crash
+    bad = lib.gen_alarm_bundle([{"tag": "X", "class": "NOPE"}])
+    assert bad["ok"] is False and bad["errors"]
+
+def test_parse_source_never_reads_files_by_default():
+    from plc_mcp.server import _resolve_source
+    # default: literal text even if it looks like an existing path
+    assert _resolve_source("/etc/hostname", False) == "/etc/hostname"
+    try:
+        _resolve_source("../../etc/passwd", True)
+        raised = False
+    except ValueError:
+        raised = True
+    assert raised
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):
