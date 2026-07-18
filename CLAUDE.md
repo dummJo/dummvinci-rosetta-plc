@@ -4,6 +4,10 @@
 - Read `feature_list.json` — current state, what passes, what does not.
 - Read latest file in `docs/handoff/` if present.
 - Run `bash scripts/verify.sh` before AND after any change.
+- Task touches alarms / events / faults / historian / error codes?
+  Read `docs/library/ALARM-PHILOSOPHY.md` + `docs/library/HISTORIAN-DESIGN.md`
+  FIRST, then use the library patterns (`plc_lib_list`) — do not reinvent
+  an alarm state machine ad hoc.
 
 ## Hard Rules
 - The server does mechanical work only. NEVER add logic that silently
@@ -21,6 +25,12 @@
   (test name / command output), never on inspection alone.
 - New source dialects or emitters require: sample input in `samples/`,
   tests in `tests/`, and an entry in `feature_list.json` — before code.
+- **Catalog no-fabrication rule**: error-code entries require provenance;
+  `verified: true` only after a human checked the entry against the vendor
+  manual for the installed FW revision. `plc_errorcode_lookup` REFUSES
+  unknown codes — never add guessing logic to "help".
+- Library patterns are drafts by declaration: keep the usage headers and
+  disclaimers intact; every pattern must stay `plc_lint_st`-clean.
 - Do not mark work complete if `scripts/verify.sh` fails.
 
 ## End of Session

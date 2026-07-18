@@ -1,24 +1,37 @@
 """dummvinci-rosetta-plc — MCP server for cross-vendor PLC migration engineering.
 
-Tools (Phase 1, production path Mitsubishi MELSEC -> ABB AC500 V3):
+Migration tools (sources: Mitsubishi MELSEC, Siemens S7 STL/AWL ->
+targets: ABB AC500 V3, Siemens TIA SCL):
 
-  plc_parse_melsec       IL text export -> IR JSON
+  plc_parse_melsec       MELSEC IL text export -> IR JSON
+  plc_parse_siemens_awl  Siemens S7 STL/AWL source -> IR JSON
   plc_device_xref        IR -> cross-reference table
-  plc_flag_semantics     IR -> [VERIFY] assumption register
+  plc_flag_semantics     IR -> [VERIFY] assumption register (H1-H11)
   plc_map_io             IR -> AC500 S500 channel mapping proposal
   plc_emit_st            IR -> draft IEC 61131-3 ST (AC500/CODESYS)
   plc_emit_plcopen_xml   ST -> PLCopen TC6 XML for Automation Builder
   plc_emit_scl           ST -> Siemens SCL external source (Phase 3 seed)
   plc_lint_st            structural lint of generated code
+  plc_generate_report    markdown migration report + BLOCKER sign-off
+
+Engineering library tools (alarm/event/fault + historian, IEC 62682 /
+NAMUR NE 107 / Meldeklassen — see docs/library/):
+
+  plc_lib_list           list ST patterns + error-code catalogs
+  plc_lib_get            fetch one ST pattern with usage header
+  plc_errorcode_lookup   code -> class/text/cause/remedy (refuses unknown)
+  plc_gen_alarm_bundle   alarm point list -> ST bundle + catalog stubs
 
 Design contract: deterministic/mechanical work lives here; semantic
 judgment stays with the engineer + AI. The server never resolves an
 ALWAYS_OFF rung, an MC/MCR zone, or a TO/FROM fieldbus block on its own —
-it flags them.
+it flags them. Safety-instrumented functions are out of scope entirely
+(H11 / SAFETY.md).
 """
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -27,12 +40,14 @@ from mcp.server.fastmcp import FastMCP
 
 from .ir import Program, Rung, Instruction, Device, Op
 from .parsers.melsec import parse_melsec_il
+from .parsers.siemens_awl import parse_siemens_awl
 from .analysis.xref import build_xref
 from .analysis.semantics import flag_semantics
 from .analysis.iomap import map_io, DEFAULT_PROFILE
 from .analysis.report import generate_report
 from .emitters.st import emit_st
 from .emitters.plcopen import emit_plcopen_xml, emit_scl, lint_st
+from . import library as lib
 
 mcp = FastMCP("dummvinci-rosetta-plc")
 
@@ -62,14 +77,42 @@ def _get_program(program_id: str) -> Program:
     return _STORE[program_id]
 
 
+def _resolve_source(source: str, is_path: bool) -> str:
+    """Resolve the parse input. File reads are an explicit opt-in
+    (audit MED-2): with is_path False the string is ALWAYS literal IL
+    text — never silently promoted to a filesystem read.
+
+    Defense-in-depth (review finding): set the PLC_MCP_SOURCE_ROOT env
+    var to confine opt-in reads to a directory tree; without it, any
+    user-readable path is allowed (the normal local-MCP use case —
+    exports live wherever the engineer saved them)."""
+    if not is_path:
+        return source
+    p = Path(source)
+    if ".." in p.parts:
+        raise ValueError("Refusing path containing '..' segments")
+    root = os.environ.get("PLC_MCP_SOURCE_ROOT")
+    if root:
+        resolved = p.resolve()
+        root_resolved = Path(root).resolve()
+        if not resolved.is_relative_to(root_resolved):
+            raise ValueError(
+                f"Refusing path outside PLC_MCP_SOURCE_ROOT ({root})")
+    return p.read_text(encoding="utf-8", errors="replace")
+
+
 class ParseInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=False, extra="forbid")
     source: str = Field(..., description=(
-        "Either the raw MELSEC instruction-list text, OR a filesystem path "
-        "to the exported .il/.txt file. Paths are detected by existence."))
+        "The raw MELSEC instruction-list text. To read from a file "
+        "instead, set source_is_path=true and pass the path here."))
+    source_is_path: bool = Field(False, description=(
+        "When true, 'source' is treated as a filesystem path to the "
+        "exported .il/.txt ('..' segments rejected). Default false: "
+        "'source' is always literal text, never a file read."))
     program_id: str = Field("MAIN", description=(
         "Identifier to store the parsed program under, for chaining "
-        "(e.g. 'jmr_centrifugal_1')"), min_length=1, max_length=64)
+        "(e.g. 'centrifugal_1')"), min_length=1, max_length=64)
     dialect: str = Field("melsec_a", description=(
         "Source dialect: 'melsec_a' (A/AnS series) or 'melsec_q'"))
 
@@ -83,13 +126,7 @@ async def plc_parse_melsec(params: ParseInput) -> str:
     program_id for use by the other tools. Supports [SYMBOLS] sections,
     inline comments, compare contacts (LD= ...), applied instructions.
     Unknown mnemonics are preserved and surfaced — never dropped."""
-    text = params.source
-    p = Path(params.source)
-    try:
-        if len(params.source) < 512 and p.exists():
-            text = p.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        pass
+    text = _resolve_source(params.source, params.source_is_path)
     prog = parse_melsec_il(text, name=params.program_id,
                            dialect=params.dialect)
     _STORE[params.program_id] = prog
@@ -102,9 +139,48 @@ async def plc_parse_melsec(params: ParseInput) -> str:
     }, indent=2)
 
 
+class ParseAwlInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=False, extra="forbid")
+    source: str = Field(..., description=(
+        "The raw Siemens S7 STL/AWL source text (STEP 7 'generate source' "
+        "or typed listing; German U/UN/O/= or English A/AN mnemonics). "
+        "To read from a file, set source_is_path=true."))
+    source_is_path: bool = Field(False, description=(
+        "When true, 'source' is a filesystem path ('..' rejected; "
+        "optionally confined via PLC_MCP_SOURCE_ROOT)."))
+    program_id: str = Field("MAIN", description=(
+        "Identifier to store the parsed program under, for chaining"),
+        min_length=1, max_length=64)
+
+
+@mcp.tool(name="plc_parse_siemens_awl", annotations={
+    "title": "Parse Siemens S7 STL/AWL source", "readOnlyHint": True,
+    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+async def plc_parse_siemens_awl(params: ParseAwlInput) -> str:
+    """Parse Siemens S7 STL/AWL (classic S7-300/400 subset) into the same
+    vendor-neutral IR as the MELSEC parser — enabling S7-classic -> ABB
+    AC500 migration and S7-classic -> TIA modernization through the same
+    pipeline (xref, H1-H12 hazard register, ST/PLCopen/SCL emitters).
+    Boolean/RLO logic, outputs, S/R, L/T moves, S5 timers (flagged H12),
+    jumps (H7), MCR zones (H4) are translated; accumulator math, counters,
+    DB structure access surface as H9 blockers — never silently dropped."""
+    text = _resolve_source(params.source, params.source_is_path)
+    prog = parse_siemens_awl(text, name=params.program_id)
+    _STORE[params.program_id] = prog
+    return json.dumps({
+        "program_id": params.program_id,
+        "summary": prog.meta,
+        "symbols_loaded": len(prog.symbols),
+        "next_steps": ["plc_flag_semantics (mandatory before any emit)",
+                       "plc_device_xref", "plc_emit_st",
+                       "plc_emit_scl (for TIA target)"],
+    }, indent=2)
+
+
 class ProgramRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    program_id: str = Field("MAIN", description="Id from plc_parse_melsec")
+    program_id: str = Field("MAIN", description=(
+        "Id from plc_parse_melsec / plc_parse_siemens_awl"))
 
 
 @mcp.tool(name="plc_device_xref", annotations={
@@ -114,7 +190,7 @@ async def plc_device_xref(params: ProgramRef) -> str:
     """Build the full device cross-reference: for every device, where it is
     read, written (OUT/SET/RST/MOV...), symbol name, plus automatic
     detection of double coils, write-only and read-only-never-written
-    devices. This is the table the Tsukishima dossier Section 2.1 was built
+    devices. This is the table the reference migration dossier was built
     from — automated."""
     return json.dumps(build_xref(_get_program(params.program_id)), indent=2)
 
@@ -237,6 +313,103 @@ async def plc_generate_report(params: ReportInput) -> str:
     prog = _get_program(params.program_id)
     return generate_report(prog, project=params.project,
                            prepared_by=params.prepared_by)
+
+
+class EmptyInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+@mcp.tool(name="plc_lib_list", annotations={
+    "title": "List engineering-library content", "readOnlyHint": True,
+    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+async def plc_lib_list(params: EmptyInput) -> str:
+    """List the engineering library: IEC 61131-3 ST patterns (alarm state
+    machine per IEC 62682, alarm manager with first-out, SoE event-logger
+    historian, comms watchdog, ACS880 diagnostics) and the error-code
+    catalogs with their verification status. Concepts are documented in
+    docs/library/ALARM-PHILOSOPHY.md and HISTORIAN-DESIGN.md — read those
+    before designing alarm/event handling."""
+    return json.dumps({
+        "patterns": lib.list_patterns(),
+        "catalogs": lib.list_catalogs(),
+        "docs": ["docs/library/ALARM-PHILOSOPHY.md",
+                 "docs/library/HISTORIAN-DESIGN.md"],
+        "note": ("Patterns are drafts: review + FAT mandatory. NOT for "
+                 "safety-instrumented functions (SAFETY.md / H11)."),
+    }, indent=2)
+
+
+class LibGetInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(..., description=(
+        "Pattern name from plc_lib_list, e.g. 'FB_AlarmPoint'"),
+        min_length=1, max_length=64)
+
+
+@mcp.tool(name="plc_lib_get", annotations={
+    "title": "Get an ST library pattern", "readOnlyHint": True,
+    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+async def plc_lib_get(params: LibGetInput) -> str:
+    """Fetch one library pattern's full IEC 61131-3 ST source, including
+    its usage header (standard basis, wiring instructions, disclaimers)."""
+    src = lib.get_pattern(params.name)
+    if src is None:
+        return json.dumps({
+            "found": False,
+            "available": [p["name"] for p in lib.list_patterns()]})
+    return src
+
+
+class CodeLookupInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source: str = Field(..., description=(
+        "Catalog source from plc_lib_list, e.g. 'acs880'"),
+        min_length=1, max_length=32)
+    code: str = Field(..., description=(
+        "Code as displayed by the device, e.g. '2310' or 'A5A0'"),
+        min_length=1, max_length=16)
+
+
+@mcp.tool(name="plc_errorcode_lookup", annotations={
+    "title": "Error-code lookup (cause + remedy)", "readOnlyHint": True,
+    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+async def plc_errorcode_lookup(params: CodeLookupInput) -> str:
+    """Look up an error/fault/warning code: Meldeklasse, bilingual EN/DE
+    text, cause, remedy, provenance, and verification status. REFUSES
+    codes that are not in the catalog — fault codes are a low-trust
+    domain, so unknown codes are routed to the authoritative source
+    (Drive Composer Pro / firmware manual), never guessed."""
+    return json.dumps(lib.lookup_code(params.source, params.code), indent=2)
+
+
+class AlarmBundleInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    points_json: str = Field(..., description=(
+        "JSON array of alarm points: [{tag, class: FAULT|WARNING|EVENT, "
+        "priority: 1-4, code, text_en, text_de, on_delay_ms, off_delay_ms, "
+        "latching}]"))
+    pou_name: str = Field("PRG_Alarms", max_length=64)
+
+
+@mcp.tool(name="plc_gen_alarm_bundle", annotations={
+    "title": "Generate alarm-handling ST bundle", "readOnlyHint": True,
+    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+async def plc_gen_alarm_bundle(params: AlarmBundleInput) -> str:
+    """Generate a draft ST program wiring FB_AlarmPoint instances into
+    FB_AlarmManager from a JSON alarm list (deterministic codegen), plus
+    catalog stub entries for the codes. Every xIn is an explicit TODO —
+    condition wiring is engineering judgment, not codegen."""
+    try:
+        points = json.loads(params.points_json)
+    except json.JSONDecodeError as exc:
+        return json.dumps({"ok": False, "errors": [f"bad JSON: {exc}"]})
+    if not isinstance(points, list):
+        return json.dumps({"ok": False,
+                           "errors": ["points_json must be a JSON array"]})
+    result = lib.gen_alarm_bundle(points, pou_name=params.pou_name)
+    if result.get("ok"):
+        result["lint"] = lint_st(result["st_code"])
+    return json.dumps(result, indent=2)
 
 
 def main() -> None:

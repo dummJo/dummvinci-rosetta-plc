@@ -39,15 +39,22 @@ class _Decls:
     outputs: set = field(default_factory=set)
 
 
+def _ident(raw: str) -> str:
+    """Sanitize a device address into a legal IEC identifier —
+    Siemens bit addresses carry dots (E1.0 -> E1_0)."""
+    import re
+    return re.sub(r"\W", "_", raw)
+
+
 def _var(d: Device, decls: _Decls) -> str:
-    """Map a MELSEC device to an IEC identifier and register declaration."""
+    """Map a source device to an IEC identifier and register declaration."""
     c = d.dclass
     if c == DeviceClass.INPUT:
-        name = f"xDI_{d.raw}"
+        name = f"xDI_{_ident(d.raw)}"
         decls.inputs.add(name)
         return name
     if c == DeviceClass.OUTPUT:
-        name = f"xDO_{d.raw}"
+        name = f"xDO_{_ident(d.raw)}"
         decls.outputs.add(name)
         return name
     if c == DeviceClass.SPECIAL:
@@ -55,23 +62,29 @@ def _var(d: Device, decls: _Decls) -> str:
                 "FIRST_SCAN_ON": "bInitFirstScan",
                 "RUN_AFTER_FIRST": "NOT bInitFirstScan"}[d.special]
     if c == DeviceClass.INTERNAL:
-        decls.bools.add(d.raw)
-        return d.raw
+        name = _ident(d.raw)
+        decls.bools.add(name)
+        return name
     if c == DeviceClass.LATCH:
-        decls.retain_bools.add(d.raw)
-        return d.raw
+        name = _ident(d.raw)
+        decls.retain_bools.add(name)
+        return name
     if c == DeviceClass.TIMER:
-        decls.timers.add(f"t{d.raw}")
-        return f"t{d.raw}.Q"
+        name = f"t{_ident(d.raw)}"
+        decls.timers.add(name)
+        return f"{name}.Q"
     if c == DeviceClass.COUNTER:
-        decls.counters.add(f"c{d.raw}")
-        return f"c{d.raw}.Q"
+        name = f"c{_ident(d.raw)}"
+        decls.counters.add(name)
+        return f"{name}.Q"
     if c == DeviceClass.DATA:
-        decls.ints.add(d.raw)
-        return d.raw
+        name = _ident(d.raw)
+        decls.ints.add(name)
+        return name
     if c == DeviceClass.FILE:
-        decls.retain_ints.add(d.raw)
-        return d.raw
+        name = _ident(d.raw)
+        decls.retain_ints.add(name)
+        return name
     if c == DeviceClass.CONST:
         return str(d.number)
     if c == DeviceClass.HCONST:
@@ -91,31 +104,45 @@ def _timer_pt(preset: Device, decls: _Decls) -> str:
     return f"DINT_TO_TIME(TO_DINT({reg}) * 100)"
 
 
-def _eval_contacts(instrs: list[Instruction], decls: _Decls,
-                   notes: list[str]):
-    """Run the MELSEC stack machine over contact instructions.
+# Ops that only build the rung condition. Anything else is an action and
+# is emitted against the condition stack's CURRENT top — this keeps each
+# MPS/MRD/MPP branch output on its own branch condition (audit H-2).
+_COND_OPS = (set(CMP_OPS)
+             | {Op.LD, Op.LDI, Op.AND, Op.ANI, Op.OR, Op.ORI,
+                Op.LDP, Op.LDF, Op.ANDP, Op.ANDF, Op.ORP, Op.ORF,
+                Op.ANB, Op.ORB, Op.MPS, Op.MRD, Op.MPP})
 
-    Returns final condition expression string (or 'TRUE' if rung has no
-    contacts, e.g. unconditional applied instruction).
-    """
-    stack: list[str] = []
-    mps: list[str] = []
 
-    def top() -> str:
-        return stack[-1] if stack else "TRUE"
+class _CondStack:
+    """Stateful MELSEC condition stack machine, fed in program order."""
 
-    for ins in instrs:
+    def __init__(self, decls: _Decls, notes: list[str]):
+        self.stack: list[str] = []
+        self.mps: list[str] = []
+        self.decls = decls
+        self.notes = notes
+
+    def top(self) -> str:
+        return self.stack[-1] if self.stack else "TRUE"
+
+    def feed(self, ins: Instruction) -> None:
         op, ops = ins.op, ins.operands
+        decls, stack = self.decls, self.stack
         if op in (Op.LD, Op.LDI):
             e = _var(ops[0], decls)
             stack.append(f"NOT {e}" if op is Op.LDI else e)
         elif op in (Op.LDP, Op.LDF):
             e = _var(ops[0], decls)
-            notes.append(f"step {ins.step}: edge contact {op.value} "
-                         f"{ops[0].raw} — needs R_TRIG/F_TRIG instance")
+            self.notes.append(f"step {ins.step}: edge contact {op.value} "
+                              f"{ops[0].raw} — needs R_TRIG/F_TRIG instance")
             stack.append(f"(*EDGE {op.value}*){e}")
         elif op in (Op.AND, Op.ANI, Op.ANDP, Op.ANDF):
             e = _var(ops[0], decls)
+            if op in (Op.ANDP, Op.ANDF):
+                self.notes.append(
+                    f"step {ins.step}: edge {op.value} {ops[0].raw} — "
+                    f"needs R_TRIG/F_TRIG instance; emitted as level AND")
+                e = f"(*EDGE {op.value}*){e}"
             if op in (Op.ANI,):
                 e = f"NOT {e}"
             stack.append(f"({stack.pop()} AND {e})" if stack else e)
@@ -146,16 +173,13 @@ def _eval_contacts(instrs: list[Instruction], decls: _Decls,
                 b, a = stack.pop(), stack.pop()
                 stack.append(f"({a} OR {b})")
         elif op is Op.MPS:
-            mps.append(top())
+            self.mps.append(self.top())
         elif op is Op.MRD:
-            if mps:
-                stack.append(mps[-1])
+            if self.mps:
+                stack.append(self.mps[-1])
         elif op is Op.MPP:
-            if mps:
-                stack.append(mps.pop())
-        else:
-            break  # first non-contact instruction ends condition evaluation
-    return top()
+            if self.mps:
+                stack.append(self.mps.pop())
 
 
 def emit_st(prog: Program, flags: dict | None = None,
@@ -166,17 +190,15 @@ def emit_st(prog: Program, flags: dict | None = None,
     for f in (flags or {}).get("flags", []):
         flag_by_step.setdefault(f["step"], []).append(f)
 
+    # Audit H-3: counters that are RST somewhere get their CTU RESET input
+    # wired from a helper bool that is assigned at the RST rung.
+    rst_counters = {i.operands[0].raw for i in prog.all_instructions()
+                    if i.op is Op.RST and i.operands
+                    and i.operands[0].dclass == DeviceClass.COUNTER}
+
     for rung in prog.rungs:
-        contacts = [i for i in rung.instructions
-                    if i.op not in (Op.OUT, Op.SET, Op.RST, Op.PLS, Op.PLF,
-                                    Op.MC, Op.MCR, Op.END)
-                    and i.op.value not in ("MOV", "DMOV", "BMOV", "FMOV")
-                    and not i.op.value in ("+", "-", "*", "/", "D*", "D/",
-                                           "D+", "D-", "INC", "DEC", "INCP",
-                                           "DECP", "TO", "FROM", "CJ")]
-        actions = [i for i in rung.instructions if i not in contacts]
         notes: list[str] = []
-        cond = _eval_contacts(contacts, decls, notes)
+        cs = _CondStack(decls, notes)
 
         hdr = [f"(* ---- step {rung.start_step}"
                + (f" — {rung.comment}" if rung.comment else "") + " ---- *)"]
@@ -184,16 +206,19 @@ def emit_st(prog: Program, flags: dict | None = None,
             for f in flag_by_step.get(i.step, []):
                 hdr.append(f"(* TODO [{f['code']}|{f['severity']}] "
                            f"{f['required_action']} *)")
-        for n in notes:
-            hdr.append(f"(* NOTE {n} *)")
         body.extend(hdr)
 
-        if not actions:
-            body.append(f"(* condition-only network: {cond} *)")
-            body.append("")
-            continue
-
-        for a in actions:
+        has_action = False
+        for a in rung.instructions:
+            if a.op is Op.NOP:
+                continue
+            if a.op in _COND_OPS:
+                cs.feed(a)
+                while notes:
+                    body.append(f"(* NOTE {notes.pop(0)} *)")
+                continue
+            has_action = True
+            cond = cs.top()
             ops = a.operands
             sym = prog.symbols.get(ops[0].raw, "") if ops else ""
             symc = f"  (* {sym} *)" if sym else ""
@@ -201,9 +226,17 @@ def emit_st(prog: Program, flags: dict | None = None,
                 cname = f"c{ops[0].raw}"
                 decls.counters.add(cname)
                 pv = _var(ops[1], decls) if len(ops) > 1 else "0"
-                body.append(f"{cname}(CU := {cond}, PV := {pv});{symc}  "
-                            f"(* RESET input must be wired from the RST "
-                            f"rung of {ops[0].raw} *)")
+                if ops[0].raw in rst_counters:
+                    helper = f"xRst{ops[0].raw}"
+                    decls.bools.add(helper)
+                    body.append(f"{cname}(CU := {cond}, RESET := {helper}, "
+                                f"PV := {pv});{symc}  (* RESET assigned at "
+                                f"the RST rung of {ops[0].raw} — verify "
+                                f"scan order *)")
+                else:
+                    body.append(f"{cname}(CU := {cond}, PV := {pv});{symc}  "
+                                f"(* no RST for {ops[0].raw} in parsed "
+                                f"scope — verify reset source *)")
             elif a.op is Op.OUT and ops and ops[0].dclass == DeviceClass.TIMER:
                 tname = f"t{ops[0].raw}"
                 decls.timers.add(tname)
@@ -212,9 +245,27 @@ def emit_st(prog: Program, flags: dict | None = None,
             elif a.op is Op.OUT:
                 body.append(f"{_var(ops[0], decls)} := {cond};{symc}")
             elif a.op in (Op.SET, Op.RST):
-                val = "TRUE" if a.op is Op.SET else "FALSE"
-                body.append(f"IF {cond} THEN {_var(ops[0], decls)} := {val}; "
-                            f"END_IF;{symc}")
+                d = ops[0]
+                if a.op is Op.RST and d.dclass == DeviceClass.COUNTER:
+                    helper = f"xRst{d.raw}"
+                    decls.bools.add(helper)
+                    body.append(f"{helper} := {cond};{symc}  (* wired to "
+                                f"c{d.raw} RESET input *)")
+                elif a.op is Op.RST and d.dclass == DeviceClass.TIMER:
+                    body.append(f"(* TODO [RST-TIMER] RST {d.raw}: TON has "
+                                f"no reset input — it clears when IN goes "
+                                f"FALSE. Verify legacy RST semantics "
+                                f"(A-series RST clears contact + elapsed) "
+                                f"and restructure the IN condition; do not "
+                                f"assign t{d.raw}.Q. *)")
+                elif a.op is Op.RST and d.dclass in (DeviceClass.DATA,
+                                                     DeviceClass.FILE):
+                    body.append(f"IF {cond} THEN {_var(d, decls)} := 0; "
+                                f"END_IF;{symc}")
+                else:
+                    val = "TRUE" if a.op is Op.SET else "FALSE"
+                    body.append(f"IF {cond} THEN {_var(d, decls)} := {val}; "
+                                f"END_IF;{symc}")
             elif a.op in (Op.PLS, Op.PLF):
                 trig = f"trig{ops[0].raw}"
                 decls.trigs.add(trig)
@@ -259,6 +310,8 @@ def emit_st(prog: Program, flags: dict | None = None,
                 body.append("(* END of source program *)")
             else:
                 body.append(f"(* UNTRANSLATED: {a.raw} *)")
+        if not has_action:
+            body.append(f"(* condition-only network: {cs.top()} *)")
         body.append("")
 
     # ---- render POU ----

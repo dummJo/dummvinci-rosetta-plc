@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dummvinci-rosetta-plc error-code catalog",
+  "description": "One catalog file per source device family. Entries map an error/fault/warning code to class, bilingual text, cause, and remedy. NO ENTRY MAY BE FABRICATED: provenance is mandatory, and verified stays false until the entry has been checked against the vendor manual for the installed firmware revision.",
+  "type": "object",
+  "required": ["source", "device_family", "provenance_default", "entries"],
+  "properties": {
+    "source": {
+      "type": "string",
+      "description": "Catalog key used by plc_errorcode_lookup, e.g. 'acs880'"
+    },
+    "device_family": { "type": "string" },
+    "provenance_default": {
+      "type": "string",
+      "description": "Default provenance applied to entries without their own"
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "kind", "class", "name", "text_en", "text_de",
+                     "cause", "remedy", "verified"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Code as displayed by the device (hex string for ACS880, e.g. '2310' or 'A5A0')"
+          },
+          "kind": { "enum": ["fault", "warning", "event"] },
+          "class": {
+            "enum": ["FAULT", "WARNING", "EVENT"],
+            "description": "Meldeklasse: FAULT=Stoerung, WARNING=Warnung, EVENT=Meldung"
+          },
+          "name": { "type": "string" },
+          "text_en": { "type": "string" },
+          "text_de": { "type": "string" },
+          "cause": { "type": "string" },
+          "remedy": { "type": "string" },
+          "provenance": { "type": "string" },
+          "verified": {
+            "type": "boolean",
+            "description": "true ONLY after a human checked the entry against the vendor manual for the installed FW revision"
+          }
+        }
+      }
+    }
+  }
+}

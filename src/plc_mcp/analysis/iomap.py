@@ -1,6 +1,6 @@
 """I/O mapping: Mitsubishi X/Y devices -> ABB AC500 S500 module channels.
 
-Default hardware profile mirrors the JMR/DSI centrifugal dossier BOM:
+Default hardware profile mirrors the pilot centrifugal retrofit BOM:
   DI524 x2   (64 DI)               <- X inputs
   DO524 x1   (32 DO, 24VDC source) <- Y DC outputs (lamps, drive cmds)
   DX522 x4   (32 relay outputs)    <- Y AC loads (solenoids, contactors)
@@ -36,14 +36,37 @@ def _in_ranges(n: int, ranges) -> bool:
 def map_io(prog: Program, profile: dict | None = None) -> dict[str, Any]:
     p = {**DEFAULT_PROFILE, **(profile or {})}
     xref = build_xref(prog)
-    xs = sorted((d for d in xref["devices"]
-                 if d.startswith("X") and not d.startswith("XX")),
-                key=lambda d: int(d[1:], 16))
-    ys = sorted((d for d in xref["devices"] if d.startswith("Y")),
-                key=lambda d: int(d[1:], 16))
+
+    def _hexnum(d: str) -> int | None:
+        try:
+            return int(d[1:], 16)
+        except ValueError:
+            return None
 
     mapping: list[dict[str, Any]] = []
     warnings: list[str] = []
+
+    # Non-hex X/Y tokens (symbolic operands, parser artifacts) go to an
+    # explicit verify bucket instead of crashing the whole mapping.
+    odd = [d for d in xref["devices"]
+           if d.startswith(("X", "Y")) and len(d) > 1
+           and _hexnum(d) is None]
+    for dev in odd:
+        mapping.append({"legacy": dev,
+                        "symbol": xref["devices"][dev]["symbol"],
+                        "direction": "UNKNOWN", "module": "UNMAPPED",
+                        "channel": -1, "iec_var": f"x_{dev}",
+                        "note": "non-hex X/Y token — verify manually"})
+    if odd:
+        warnings.append(f"{len(odd)} X/Y token(s) with non-hex address "
+                        f"routed to UNMAPPED — verify: {', '.join(odd)}")
+
+    xs = sorted((d for d in xref["devices"]
+                 if d.startswith("X") and _hexnum(d) is not None),
+                key=_hexnum)
+    ys = sorted((d for d in xref["devices"]
+                 if d.startswith("Y") and _hexnum(d) is not None),
+                key=_hexnum)
 
     # inputs
     di_slots = [(m["name"], ch) for m in p["di_modules"]

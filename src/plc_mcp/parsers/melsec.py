@@ -14,7 +14,7 @@ Also tolerated: lines with only "STEP INSTR OPERANDS", comment lines starting
 with ';' or '//', symbol lines of the form "X8B  LSW-11" in an optional
 [SYMBOLS] section, and blank lines.
 
-This parser targets the A-series dialect first (project JMR/DSI) but the
+This parser targets the A-series dialect first (the pilot retrofit program) but the
 grammar is shared with Q/FX list exports for the instruction subset we
 support. Unknown instructions are preserved as Op.UNKNOWN so nothing is
 silently dropped — they surface in flag_semantics.
@@ -24,6 +24,12 @@ from __future__ import annotations
 import re
 from ..ir import (Program, Rung, Instruction, Device, Op,
                  CONTACT_OPS, COIL_OPS, CMP_OPS, APPLIED_OPS)
+
+# Ops that only build the rung condition (stack machine) — an LD seen while
+# the current network still has ONLY these is a block-open (for a later
+# ANB/ORB/MPS), NOT a new network.
+_CONDITION_OPS = CONTACT_OPS | CMP_OPS | {Op.ANB, Op.ORB,
+                                          Op.MPS, Op.MRD, Op.MPP}
 
 _CMP_MAP = {
     "LD=": Op.CMP_EQ, "LD<>": Op.CMP_NE, "LD>": Op.CMP_GT,
@@ -114,9 +120,15 @@ def parse_melsec_il(text: str, name: str = "MAIN",
         if op is Op.UNKNOWN:
             instr.raw = f"{stripped}  <<UNKNOWN MNEMONIC '{m.group(2)}'>>"
 
-        rung_start = op in (Op.LD, Op.LDI, Op.LDP, Op.LDF) or (
+        ld_form = op in (Op.LD, Op.LDI, Op.LDP, Op.LDF) or (
             op in CMP_OPS and m.group(2).upper().startswith(("LD",)))
-        # MC/MCR/END/CJ pointer labels start their own network too
+        # An LD only starts a NEW network if the current one already has an
+        # action (coil/applied/MC). An LD before any action opens a block
+        # that a later ANB/ORB/MPS consumes — splitting there loses the
+        # block combine (audit H-1).
+        rung_start = ld_form and current is not None and any(
+            i.op not in _CONDITION_OPS for i in current.instructions)
+        # MCR/END always start their own network
         if op in (Op.MCR, Op.END):
             rung_start = True
         if rung_start or current is None:

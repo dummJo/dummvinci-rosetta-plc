@@ -1,9 +1,11 @@
 [project]
 name = "dummvinci-rosetta-plc"
-version = "0.2.0"
-description = "Rosetta Stone for PLC dialects — deterministic cross-vendor migration engineering (MELSEC -> ABB AC500 V3, Siemens SCL seed). Translates faithfully; never guesses on semantics. DummVinci / PTTS."
+version = "0.4.0"
+description = "Rosetta Stone for PLC dialects — deterministic cross-vendor migration engineering (MELSEC + S7-classic AWL -> ABB AC500 V3 + Siemens TIA SCL). Translates faithfully; never guesses on semantics. DummVinci / PTTS."
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Adam Jo (DummVinci / PTTS)" }]
 dependencies = ["mcp>=1.0.0", "pydantic>=2.0"]
 
 [project.scripts]
@@ -15,3 +17,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"plc_mcp.library" = ["patterns/*.st", "catalog/*.json", "catalog/*.md"]

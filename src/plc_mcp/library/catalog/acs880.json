@@ -1,0 +1,172 @@
+{
+  "source": "acs880",
+  "device_family": "ABB ACS880 industrial drives (primary control program)",
+  "provenance_default": "Seeded from general knowledge of the ABB ACS880 primary control program firmware manual. UNVERIFIED: check code + remedy against the manual matching the drive's installed FW revision (Drive Composer Pro > System info) before use in any customer-facing document.",
+  "entries": [
+    {
+      "code": "2310",
+      "kind": "fault",
+      "class": "FAULT",
+      "name": "Overcurrent",
+      "text_en": "Output current has exceeded the internal fault limit.",
+      "text_de": "Ausgangsstrom hat die interne Fehlergrenze überschritten.",
+      "cause": "Too-short acceleration ramp, shock load, motor/cable fault, wrong motor data, or an output-side contactor opened under load.",
+      "remedy": "Check motor load and mechanics; lengthen acceleration time (23.12); check motor and motor cable (phase-to-phase, phase-to-earth); verify motor nameplate data in group 99; ensure no contactor switches in the motor cable during run.",
+      "verified": false
+    },
+    {
+      "code": "2330",
+      "kind": "fault",
+      "class": "FAULT",
+      "name": "Earth leakage",
+      "text_en": "Load unbalance, typically an earth fault in motor or motor cable.",
+      "text_de": "Erdschluss — Unsymmetrie, typischerweise Erdfehler in Motor oder Motorkabel.",
+      "cause": "Insulation failure in motor or motor cable; excessive cable capacitance to earth.",
+      "remedy": "Megger the motor and motor cable (disconnect from drive first); check cable routing and length vs. the drive's EMC/cable specs; if measurements are clean, contact ABB service.",
+      "verified": false
+    },
+    {
+      "code": "2340",
+      "kind": "fault",
+      "class": "FAULT",
+      "name": "Short circuit",
+      "text_en": "Short circuit detected in motor or motor cable.",
+      "text_de": "Kurzschluss in Motor oder Motorkabel erkannt.",
+      "cause": "Phase-to-phase or phase-to-earth short in the motor circuit; failed output stage.",
+      "remedy": "Do NOT reset and restart blindly. Isolate and measure motor + cable insulation; fix the short; if the fault persists with a healthy motor circuit, the inverter unit needs service.",
+      "verified": false
+    },
+    {
+      "code": "3130",
+      "kind": "fault",
+      "class": "FAULT",
+      "name": "Input phase loss",
+      "text_en": "DC link ripple indicates a missing input phase or blown fuse.",
+      "text_de": "Netzphasenausfall — Zwischenkreis-Welligkeit deutet auf fehlende Eingangsphase oder defekte Sicherung.",
+      "cause": "Blown supply fuse, loose supply connection, supply unbalance.",
+      "remedy": "Check supply fuses and all input power connections; measure the three input phases under load; check supply unbalance against the drive's rating.",
+      "verified": false
+    },
+    {
+      "code": "3181",
+      "kind": "fault",
+      "class": "FAULT",
+      "name": "Wiring or earth fault",
+      "text_en": "Incorrect input power / motor cabling detected, or an earth fault.",
+      "text_de": "Verdrahtungs- oder Erdschlussfehler — falsche Netz-/Motorverkabelung erkannt.",
+      "cause": "Input power connected to drive output, or earth fault on the drive output side.",
+      "remedy": "Verify the power wiring: supply on input terminals, motor on output terminals; check for earth faults in the motor circuit.",
+      "verified": false
+    },
+    {
+      "code": "3210",
+      "kind": "fault",
+      "class": "FAULT",
+      "name": "DC link overvoltage",
+      "text_en": "Intermediate-circuit DC voltage exceeded the fault limit.",
+      "text_de": "Zwischenkreis-Überspannung — Grenzwert überschritten.",
+      "cause": "Deceleration ramp too short for the load inertia (regenerative energy), supply overvoltage/transients, or missing/failed brake chopper-resistor.",
+      "remedy": "Lengthen deceleration time (23.13); enable/verify overvoltage control (30.30); fit or check brake chopper + resistor; check supply voltage level and transients.",
+      "verified": false
+    },
+    {
+      "code": "3220",
+      "kind": "fault",
+      "class": "FAULT",
+      "name": "DC link undervoltage",
+      "text_en": "Intermediate-circuit DC voltage fell below the fault limit.",
+      "text_de": "Zwischenkreis-Unterspannung — Grenzwert unterschritten.",
+      "cause": "Supply dip or interruption, blown input fuse, weak supply under load.",
+      "remedy": "Check the supply voltage and fuses; investigate plant-side dips (large DOL starts on the same feeder); consider the undervoltage-control / power-loss ride-through functions.",
+      "verified": false
+    },
+    {
+      "code": "4210",
+      "kind": "fault",
+      "class": "FAULT",
+      "name": "IGBT overtemperature",
+      "text_en": "Estimated or measured IGBT temperature is excessive.",
+      "text_de": "IGBT-Übertemperatur — geschätzte oder gemessene Temperatur zu hoch.",
+      "cause": "Blocked/failed cooling fan, dirty heatsink, high ambient temperature, overload, switching frequency too high for load.",
+      "remedy": "Check cooling fan operation and heatsink cleanliness; verify ambient temperature and cabinet ventilation vs. derating tables; reduce load or switching frequency per manual.",
+      "verified": false
+    },
+    {
+      "code": "4310",
+      "kind": "fault",
+      "class": "FAULT",
+      "name": "Excess temperature",
+      "text_en": "Power unit module temperature is excessive.",
+      "text_de": "Übertemperatur des Leistungsteils.",
+      "cause": "Cooling failure, blocked airflow, ambient over spec, sustained overload.",
+      "remedy": "Check fans, air filters, and cabinet airflow; verify ambient and load profile; let the unit cool before reset and find the root cause — do not just reset repeatedly.",
+      "verified": false
+    },
+    {
+      "code": "5090",
+      "kind": "fault",
+      "class": "FAULT",
+      "name": "STO hardware failure",
+      "text_en": "Safe torque off hardware diagnostics detected a failure.",
+      "text_de": "STO-Hardwarefehler — Diagnose der sicheren Drehmomentabschaltung meldet Fehler.",
+      "cause": "Fault in the STO circuit (channel mismatch, wiring, supervision).",
+      "remedy": "SAFETY FUNCTION — do not bypass or jumper. Diagnose the STO wiring and both channels per the drive hardware manual's STO section; the safety function must be re-validated after repair (see SAFETY.md — this is certified-path territory).",
+      "verified": false
+    },
+    {
+      "code": "5091",
+      "kind": "fault",
+      "class": "FAULT",
+      "name": "Safe torque off active",
+      "text_en": "STO is active while the drive was commanded to run.",
+      "text_de": "Safe Torque Off aktiv, während ein Startbefehl anlag.",
+      "cause": "STO circuit opened (e-stop chain, safety relay) or one STO channel lost.",
+      "remedy": "SAFETY FUNCTION — establish WHY the safety chain opened before any reset; check both STO channels and their supply; never defeat the chain to keep production running (SAFETY.md / H11).",
+      "verified": false
+    },
+    {
+      "code": "7121",
+      "kind": "fault",
+      "class": "FAULT",
+      "name": "Motor stall",
+      "text_en": "Motor is operating in the stall region.",
+      "text_de": "Motor blockiert (Stall-Bereich).",
+      "cause": "Mechanical jam or overload; undersized motor/drive for the load; wrong stall supervision settings.",
+      "remedy": "Inspect the mechanics for jams; check load vs. motor/drive sizing; review stall supervision settings (group 31) against the real duty.",
+      "verified": false
+    },
+    {
+      "code": "7310",
+      "kind": "fault",
+      "class": "FAULT",
+      "name": "Overspeed",
+      "text_en": "Motor speed exceeded the allowed maximum.",
+      "text_de": "Überdrehzahl — Motordrehzahl über zulässigem Maximum.",
+      "cause": "Overhauling load driving the motor, wrong speed limits (30.11/30.12), ramp/regeneration misconfiguration.",
+      "remedy": "Check minimum/maximum speed limits and the overspeed trip margin (31.30); verify the load cannot overhaul the motor (crane/hoist: check brake sequencing); check encoder feedback if used.",
+      "verified": false
+    },
+    {
+      "code": "A4A1",
+      "kind": "warning",
+      "class": "WARNING",
+      "name": "IGBT overtemperature (warning)",
+      "text_en": "IGBT temperature approaching the fault limit.",
+      "text_de": "IGBT-Übertemperatur (Warnung) — nähert sich der Fehlergrenze.",
+      "cause": "Same as fault 4210, at warning level.",
+      "remedy": "Treat as early warning of 4210: check cooling, ambient, load before it trips.",
+      "verified": false
+    },
+    {
+      "code": "A5A0",
+      "kind": "warning",
+      "class": "WARNING",
+      "name": "Safe torque off (warning)",
+      "text_en": "STO circuit is open (warning-level indication).",
+      "text_de": "Safe Torque Off — STO-Kreis offen (Warnstufe).",
+      "cause": "STO opened while the drive was not running, or STO indication parameter set to warning.",
+      "remedy": "SAFETY FUNCTION — identify why the safety chain is open; check both STO channels; never bypass (SAFETY.md / H11).",
+      "verified": false
+    }
+  ]
+}

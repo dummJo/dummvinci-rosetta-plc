@@ -2,7 +2,7 @@
 
 Finds every construct whose meaning does NOT survive a mechanical
 translation to IEC 61131-3 and emits a [VERIFY]-style assumption register.
-This encodes the lessons of the Tsukishima dossier (Section 4):
+This encodes the lessons of the reference migration dossier:
 
   H1  ALWAYS_OFF contact in series      -> rung can never be true; almost
                                            always a commissioning disable.
@@ -154,9 +154,33 @@ def flag_semantics(prog: Program) -> dict[str, Any]:
             if op is Op.CJ:
                 flags.append(_flag(
                     "H7-COND-JUMP", "MAJOR", instr.step,
-                    f"CJ to {instr.operands[0].raw if instr.operands else '?'}.",
+                    f"Jump to "
+                    f"{instr.operands[0].raw if instr.operands else '?'} "
+                    f"({instr.raw.split()[0] if instr.raw else 'CJ'}).",
                     "Restructure as a conditional program/POU call; verify "
                     "no coil freeze-state assumptions across the jump."))
+
+            if op is Op.CALL:
+                flags.append(_flag(
+                    "H7-CALL", "MAJOR", instr.step,
+                    f"Subroutine call: {instr.raw}.",
+                    "Convert as an explicit POU call: verify parameter "
+                    "passing, instance-DB/memory mapping, and that the "
+                    "callee is migrated too."))
+
+            # S5 timers (Siemens AWL): only SE maps ~cleanly to TON.
+            if op is Op.OUT and "(S5 timer" in instr.raw:
+                mnem = instr.raw.split()[0].upper()
+                flags.append(_flag(
+                    "H12-S5-TIMER", "MAJOR", instr.step,
+                    f"S5 timer {instr.raw} — emitted as TON draft.",
+                    "Verify the timer TYPE: SE=on-delay (~TON), SS=retentive"
+                    " on-delay, SI/SV=pulse/extended pulse (~TP), SA=off-"
+                    "delay (~TOF). Only SE maps directly; restructure the "
+                    "others and confirm the preset conversion."
+                    if mnem != "SE" else
+                    "SE ~ TON: confirm preset conversion (S5T base) and "
+                    "that no RLO-gated reset semantics are lost."))
 
             if op is Op.UNKNOWN:
                 flags.append(_flag(
@@ -224,6 +248,20 @@ def flag_semantics(prog: Program) -> dict[str, Any]:
             "cranes also satisfy the classification-society rules (DNV / ABS / "
             "Lloyd's / BV) for the lifting appliance."))
 
+    # Audit H-4: H11 screening is symbol-text-driven. A symbol-free export
+    # gives it nothing to see — that is REDUCED coverage, never clearance.
+    screening_limited = len(prog.symbols) == 0
+    if screening_limited:
+        flags.append(_flag(
+            "H11-COVERAGE-UNKNOWN", "MAJOR", 0,
+            "Program has no symbol comments — H11 safety screening is "
+            "text-based and cannot recognize safety functions without "
+            "symbols/names.",
+            "Do NOT treat the absence of H11 flags as safety clearance. "
+            "Obtain the symbol/comment export, or review with the site "
+            "engineer which devices belong to safety-instrumented "
+            "functions before emitting or trusting any code."))
+
     flags.sort(key=lambda f: (-SEVERITY[f["severity"]], f["step"]))
     counts = {s: sum(1 for f in flags if f["severity"] == s) for s in SEVERITY}
     safety_hit = bool(safety_categories)
@@ -243,11 +281,16 @@ def flag_semantics(prog: Program) -> dict[str, Any]:
                    "code")
     else:
         verdict = "OK to emit draft code; review MAJOR items"
+    if screening_limited:
+        verdict = ("H11 SCREENING INCOMPLETE — symbol-free export is NOT "
+                   "cleared for safety; see H11-COVERAGE-UNKNOWN. "
+                   + verdict)
     return {
         "summary": {
             "total": len(flags), **counts,
             "safety_boundary": safety_hit,
             "safety_categories": sorted(safety_categories),
+            "safety_screening_limited": screening_limited,
             "verdict": verdict,
         },
         "flags": flags,

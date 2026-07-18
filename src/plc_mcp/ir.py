@@ -73,7 +73,12 @@ class Device:
             return cls(raw=token, dclass=DeviceClass.UNKNOWN)
         # X/Y device numbers are octal-free hex on MELSEC A
         base = 16 if dcls in (DeviceClass.INPUT, DeviceClass.OUTPUT) else 10
-        number = int(num, base) if num else None
+        try:
+            number = int(num, base) if num else None
+        except ValueError:
+            # e.g. "D1A": hex letters on a base-10 device class. Never
+            # crash the whole parse — surface as UNKNOWN (H9 catches it).
+            return cls(raw=token, dclass=DeviceClass.UNKNOWN)
         special = A_SERIES_SPECIALS.get(token)
         if special:
             dcls = DeviceClass.SPECIAL
