@@ -149,17 +149,36 @@ def gen_alarm_bundle(points: list[dict[str, Any]],
             errors.append(f"point {i} ({tag}): class must be one of "
                           f"{sorted(_CLASSES)}")
             continue
-        prio = int(p.get("priority", 2))
+
+        # user-supplied JSON: coerce defensively, surface validation
+        # errors instead of raising (review finding: int() crash)
+        def _as_int(field: str, default: int) -> Optional[int]:
+            val = p.get(field, default)
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                errors.append(f"point {i} ({tag}): {field} must be an "
+                              f"integer, got {val!r}")
+                return None
+
+        prio = _as_int("priority", 2)
+        on_ms = _as_int("on_delay_ms", 0)
+        off_ms = _as_int("off_delay_ms", 0)
+        if prio is None or on_ms is None or off_ms is None:
+            continue
         if not 1 <= prio <= 4:
             errors.append(f"point {i} ({tag}): priority must be 1..4")
+            continue
+        if on_ms < 0 or off_ms < 0:
+            errors.append(f"point {i} ({tag}): delays must be >= 0")
             continue
         code = str(p.get("code", "0")).strip().upper()
         cleaned.append({
             "tag": tag, "class": cls, "priority": prio, "code": code,
             "text_en": str(p.get("text_en", "")),
             "text_de": str(p.get("text_de", "")),
-            "on_delay_ms": int(p.get("on_delay_ms", 0)),
-            "off_delay_ms": int(p.get("off_delay_ms", 0)),
+            "on_delay_ms": on_ms,
+            "off_delay_ms": off_ms,
             "latching": bool(p.get("latching", False)),
         })
     if errors:

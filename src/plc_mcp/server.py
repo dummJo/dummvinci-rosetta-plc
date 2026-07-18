@@ -1,8 +1,10 @@
 """dummvinci-rosetta-plc — MCP server for cross-vendor PLC migration engineering.
 
-Migration tools (production path Mitsubishi MELSEC -> ABB AC500 V3):
+Migration tools (sources: Mitsubishi MELSEC, Siemens S7 STL/AWL ->
+targets: ABB AC500 V3, Siemens TIA SCL):
 
-  plc_parse_melsec       IL text export -> IR JSON
+  plc_parse_melsec       MELSEC IL text export -> IR JSON
+  plc_parse_siemens_awl  Siemens S7 STL/AWL source -> IR JSON
   plc_device_xref        IR -> cross-reference table
   plc_flag_semantics     IR -> [VERIFY] assumption register (H1-H11)
   plc_map_io             IR -> AC500 S500 channel mapping proposal
@@ -29,6 +31,7 @@ it flags them. Safety-instrumented functions are out of scope entirely
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -37,6 +40,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .ir import Program, Rung, Instruction, Device, Op
 from .parsers.melsec import parse_melsec_il
+from .parsers.siemens_awl import parse_siemens_awl
 from .analysis.xref import build_xref
 from .analysis.semantics import flag_semantics
 from .analysis.iomap import map_io, DEFAULT_PROFILE
@@ -76,12 +80,24 @@ def _get_program(program_id: str) -> Program:
 def _resolve_source(source: str, is_path: bool) -> str:
     """Resolve the parse input. File reads are an explicit opt-in
     (audit MED-2): with is_path False the string is ALWAYS literal IL
-    text — never silently promoted to a filesystem read."""
+    text — never silently promoted to a filesystem read.
+
+    Defense-in-depth (review finding): set the PLC_MCP_SOURCE_ROOT env
+    var to confine opt-in reads to a directory tree; without it, any
+    user-readable path is allowed (the normal local-MCP use case —
+    exports live wherever the engineer saved them)."""
     if not is_path:
         return source
     p = Path(source)
     if ".." in p.parts:
         raise ValueError("Refusing path containing '..' segments")
+    root = os.environ.get("PLC_MCP_SOURCE_ROOT")
+    if root:
+        resolved = p.resolve()
+        root_resolved = Path(root).resolve()
+        if not resolved.is_relative_to(root_resolved):
+            raise ValueError(
+                f"Refusing path outside PLC_MCP_SOURCE_ROOT ({root})")
     return p.read_text(encoding="utf-8", errors="replace")
 
 
@@ -123,9 +139,48 @@ async def plc_parse_melsec(params: ParseInput) -> str:
     }, indent=2)
 
 
+class ParseAwlInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=False, extra="forbid")
+    source: str = Field(..., description=(
+        "The raw Siemens S7 STL/AWL source text (STEP 7 'generate source' "
+        "or typed listing; German U/UN/O/= or English A/AN mnemonics). "
+        "To read from a file, set source_is_path=true."))
+    source_is_path: bool = Field(False, description=(
+        "When true, 'source' is a filesystem path ('..' rejected; "
+        "optionally confined via PLC_MCP_SOURCE_ROOT)."))
+    program_id: str = Field("MAIN", description=(
+        "Identifier to store the parsed program under, for chaining"),
+        min_length=1, max_length=64)
+
+
+@mcp.tool(name="plc_parse_siemens_awl", annotations={
+    "title": "Parse Siemens S7 STL/AWL source", "readOnlyHint": True,
+    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+async def plc_parse_siemens_awl(params: ParseAwlInput) -> str:
+    """Parse Siemens S7 STL/AWL (classic S7-300/400 subset) into the same
+    vendor-neutral IR as the MELSEC parser — enabling S7-classic -> ABB
+    AC500 migration and S7-classic -> TIA modernization through the same
+    pipeline (xref, H1-H12 hazard register, ST/PLCopen/SCL emitters).
+    Boolean/RLO logic, outputs, S/R, L/T moves, S5 timers (flagged H12),
+    jumps (H7), MCR zones (H4) are translated; accumulator math, counters,
+    DB structure access surface as H9 blockers — never silently dropped."""
+    text = _resolve_source(params.source, params.source_is_path)
+    prog = parse_siemens_awl(text, name=params.program_id)
+    _STORE[params.program_id] = prog
+    return json.dumps({
+        "program_id": params.program_id,
+        "summary": prog.meta,
+        "symbols_loaded": len(prog.symbols),
+        "next_steps": ["plc_flag_semantics (mandatory before any emit)",
+                       "plc_device_xref", "plc_emit_st",
+                       "plc_emit_scl (for TIA target)"],
+    }, indent=2)
+
+
 class ProgramRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    program_id: str = Field("MAIN", description="Id from plc_parse_melsec")
+    program_id: str = Field("MAIN", description=(
+        "Id from plc_parse_melsec / plc_parse_siemens_awl"))
 
 
 @mcp.tool(name="plc_device_xref", annotations={

@@ -54,12 +54,18 @@ xFault := xDriveFaulted;
 xWarning := xDriveWarning;
 diFaultCode := TO_DINT(uiFaultCode);
 
-(* --- UINT -> 4-digit hex string (ACS880 codes read as hex) --------- *)
+(* --- UINT -> 4-digit hex string (ACS880 codes read as hex) ---------
+   MID signature per IEC 61131-3 / CODESYS Standard library:
+   MID(IN, L, P) = L characters starting at position P (1-based).
+   So MID('0123456789ABCDEF', L := 1, P := iNib + 1) extracts exactly
+   ONE nibble character. Do not swap to (pos, len) — that is a
+   different vendor convention. ------------------------------------- *)
 sHex := '';
 uiTmp := uiFaultCode;
 FOR i := 1 TO 4 DO
     iNib := TO_INT(uiTmp MOD 16);
-    sHex := CONCAT(MID('0123456789ABCDEF', 1, iNib + 1), sHex);
+    sHex := CONCAT(MID(IN := '0123456789ABCDEF', L := 1, P := iNib + 1),
+                   sHex);
     uiTmp := uiTmp / 16;
 END_FOR;
 sFaultHex := sHex;
@@ -68,7 +74,8 @@ sHex := '';
 uiTmp := uiWarnCode;
 FOR i := 1 TO 4 DO
     iNib := TO_INT(uiTmp MOD 16);
-    sHex := CONCAT(MID('0123456789ABCDEF', 1, iNib + 1), sHex);
+    sHex := CONCAT(MID(IN := '0123456789ABCDEF', L := 1, P := iNib + 1),
+                   sHex);
     uiTmp := uiTmp / 16;
 END_FOR;
 sWarnHex := sHex;

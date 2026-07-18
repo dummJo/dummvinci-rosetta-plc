@@ -154,9 +154,33 @@ def flag_semantics(prog: Program) -> dict[str, Any]:
             if op is Op.CJ:
                 flags.append(_flag(
                     "H7-COND-JUMP", "MAJOR", instr.step,
-                    f"CJ to {instr.operands[0].raw if instr.operands else '?'}.",
+                    f"Jump to "
+                    f"{instr.operands[0].raw if instr.operands else '?'} "
+                    f"({instr.raw.split()[0] if instr.raw else 'CJ'}).",
                     "Restructure as a conditional program/POU call; verify "
                     "no coil freeze-state assumptions across the jump."))
+
+            if op is Op.CALL:
+                flags.append(_flag(
+                    "H7-CALL", "MAJOR", instr.step,
+                    f"Subroutine call: {instr.raw}.",
+                    "Convert as an explicit POU call: verify parameter "
+                    "passing, instance-DB/memory mapping, and that the "
+                    "callee is migrated too."))
+
+            # S5 timers (Siemens AWL): only SE maps ~cleanly to TON.
+            if op is Op.OUT and "(S5 timer" in instr.raw:
+                mnem = instr.raw.split()[0].upper()
+                flags.append(_flag(
+                    "H12-S5-TIMER", "MAJOR", instr.step,
+                    f"S5 timer {instr.raw} — emitted as TON draft.",
+                    "Verify the timer TYPE: SE=on-delay (~TON), SS=retentive"
+                    " on-delay, SI/SV=pulse/extended pulse (~TP), SA=off-"
+                    "delay (~TOF). Only SE maps directly; restructure the "
+                    "others and confirm the preset conversion."
+                    if mnem != "SE" else
+                    "SE ~ TON: confirm preset conversion (S5T base) and "
+                    "that no RLO-gated reset semantics are lost."))
 
             if op is Op.UNKNOWN:
                 flags.append(_flag(

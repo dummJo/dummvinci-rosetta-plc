@@ -5,7 +5,7 @@
 **A Rosetta Stone for PLC dialects.**
 *Deterministic cross-vendor migration engineering, exposed as an MCP server.*
 
-Mitsubishi MELSEC → ABB AC500 V3 (production path) · Siemens SCL (seeded)
+Sources: Mitsubishi MELSEC · Siemens S7 STL/AWL → Targets: ABB AC500 V3 · Siemens TIA (SCL)
 
 `by DummVinci — for PTTS retrofit engineering`
 
@@ -103,7 +103,7 @@ Full rationale and the certified hand-off path: **[`SAFETY.md`](./SAFETY.md).**
 
 ---
 
-## The migration pipeline — nine tools
+## The migration pipeline — ten tools
 
 The server exposes a pipeline. Each tool is one honest step; they chain through
 an in-memory program store keyed by `program_id`, so you never re-pass megabytes
@@ -111,19 +111,24 @@ of listing between calls.
 
 | Tool | Does | Refuses to |
 |---|---|---|
-| `plc_parse_melsec` | IL text → IR; loads `[SYMBOLS]`, compare contacts, applied instructions | invent a meaning for an unknown mnemonic |
+| `plc_parse_melsec` | MELSEC IL → IR; `[SYMBOLS]`, compare contacts, applied instructions, LD-block-aware segmentation | invent a meaning for an unknown mnemonic |
+| `plc_parse_siemens_awl` | Siemens S7 STL/AWL (classic subset) → the same IR: RLO chains, brackets, bare-O groups, S/R, L/T moves, S5 timers, MCR zones | translate accumulator math, counters, or DB structures it cannot prove (→ `H9`) |
 | `plc_device_xref` | every read/write of every device; double-coil & write-only detection | — (pure fact) |
-| `plc_flag_semantics` | the `[VERIFY]` assumption register (H1–H10) | rank a hazard as safe |
-| `plc_map_io` | X/Y → AC500 S500 channels + electrical hazard notes | assert wiring is correct without checkout |
-| `plc_emit_st` | draft IEC 61131-3 ST for AC500 V3 / CODESYS | omit a `(*TODO [Hx]*)` at a hazard site |
+| `plc_flag_semantics` | the `[VERIFY]` assumption register (H1–H12) | rank a hazard as safe |
+| `plc_map_io` | X/Y → AC500 S500 channels + electrical hazard notes (MELSEC sources) | assert wiring is correct without checkout |
+| `plc_emit_st` | draft IEC 61131-3 ST for ABB AC500 V3 / CODESYS | omit a `(*TODO [Hx]*)` at a hazard site |
 | `plc_emit_plcopen_xml` | PLCopen TC6 XML for Automation Builder import | claim AB-validated (see limits) |
-| `plc_emit_scl` | Siemens SCL external-source skeleton (Phase-3 seed) | hide the manual timer-instancing gap |
+| `plc_emit_scl` | Siemens SCL external source with TIA multi-instance pragmas auto-inserted | claim TIA-round-trip-validated (see limits) |
 | `plc_lint_st` | structural lint: IF/VAR pairing, leftover TODO/UNTRANSLATED | act as a compiler |
 | `plc_generate_report` | full markdown analysis + BLOCKER sign-off table | mark a BLOCKER resolved on its own |
 
+**The migration matrix** this enables: legacy **MELSEC A/AnS** or **S7-300/400
+classic (AWL)** sources → **ABB AC500 V3** (ST + PLCopen XML) or **Siemens TIA**
+(SCL) targets — one IR, one hazard register, four routes.
+
 ---
 
-## The hazard register (H1–H10)
+## The hazard register (H1–H12)
 
 This is the heart of the tool — the codified memory of what goes wrong.
 
@@ -138,6 +143,8 @@ This is the heart of the tool — the codified memory of what goes wrong.
 | **H7** | `CJ` conditional jump | Restructure as conditional POU call; watch coil freeze-state assumptions | 🟠 MAJOR |
 | **H8** | Multiple `OUT` coils on one device | Scan-order-dependent double coil | 🟠 MAJOR |
 | **H9** | Unknown mnemonic | Parser gap or exotic instruction — never dropped, always surfaced | 🔴 BLOCKER |
+| **H11** | Safety-instrumented function | Out of scope by design — certified toolchain territory (see the safety-boundary section) | 🔴 BLOCKER |
+| **H12** | Siemens S5 timer (`SE/SS/SI/SV/SA`) | Only `SE` maps ~cleanly to TON; the other types need restructuring, presets need conversion | 🟠 MAJOR |
 | **H10** | `RST` on wide ranges / `FMOV K0` | Bulk memory wipe — guard the trigger explicitly | 🟠 MAJOR |
 
 `plc_flag_semantics` returns a verdict: if any BLOCKER exists, the register
@@ -209,7 +216,7 @@ Add to your project `.mcp.json` (or `claude mcp add`):
 }
 ```
 
-The server speaks MCP over stdio and advertises all thirteen tools with correct
+The server speaks MCP over stdio and advertises all fourteen tools with correct
 read-only / non-destructive annotations. Verified against the reference MCP
 client: `initialize` → `list_tools` → `call_tool` round-trips cleanly.
 
@@ -240,7 +247,7 @@ This project refuses to overstate itself. Status is tracked in
 only with **recorded evidence** (a named test or command output), never on
 inspection alone.
 
-**Verified (v0.3 — 25/25 tests, `scripts/verify.sh` = VERIFY OK):**
+**Verified (v0.4 — 31/31 tests, `scripts/verify.sh` = VERIFY OK):**
 parser (counts, symbols, compare contacts) · xref · H1–H10 flagging · I/O map ·
 ST emission incl. the `CTU` counter fix · PLCopen/SCL emission · report.
 
@@ -291,7 +298,7 @@ refuses to guess.
 ## Tests
 
 ```bash
-python tests/test_pipeline.py      # 25 named checks, all must PASS
+python tests/test_pipeline.py      # 31 named checks, all must PASS
 bash   scripts/verify.sh           # tests + server import + py_compile → VERIFY OK
 ```
 

@@ -39,15 +39,22 @@ class _Decls:
     outputs: set = field(default_factory=set)
 
 
+def _ident(raw: str) -> str:
+    """Sanitize a device address into a legal IEC identifier —
+    Siemens bit addresses carry dots (E1.0 -> E1_0)."""
+    import re
+    return re.sub(r"\W", "_", raw)
+
+
 def _var(d: Device, decls: _Decls) -> str:
-    """Map a MELSEC device to an IEC identifier and register declaration."""
+    """Map a source device to an IEC identifier and register declaration."""
     c = d.dclass
     if c == DeviceClass.INPUT:
-        name = f"xDI_{d.raw}"
+        name = f"xDI_{_ident(d.raw)}"
         decls.inputs.add(name)
         return name
     if c == DeviceClass.OUTPUT:
-        name = f"xDO_{d.raw}"
+        name = f"xDO_{_ident(d.raw)}"
         decls.outputs.add(name)
         return name
     if c == DeviceClass.SPECIAL:
@@ -55,23 +62,29 @@ def _var(d: Device, decls: _Decls) -> str:
                 "FIRST_SCAN_ON": "bInitFirstScan",
                 "RUN_AFTER_FIRST": "NOT bInitFirstScan"}[d.special]
     if c == DeviceClass.INTERNAL:
-        decls.bools.add(d.raw)
-        return d.raw
+        name = _ident(d.raw)
+        decls.bools.add(name)
+        return name
     if c == DeviceClass.LATCH:
-        decls.retain_bools.add(d.raw)
-        return d.raw
+        name = _ident(d.raw)
+        decls.retain_bools.add(name)
+        return name
     if c == DeviceClass.TIMER:
-        decls.timers.add(f"t{d.raw}")
-        return f"t{d.raw}.Q"
+        name = f"t{_ident(d.raw)}"
+        decls.timers.add(name)
+        return f"{name}.Q"
     if c == DeviceClass.COUNTER:
-        decls.counters.add(f"c{d.raw}")
-        return f"c{d.raw}.Q"
+        name = f"c{_ident(d.raw)}"
+        decls.counters.add(name)
+        return f"{name}.Q"
     if c == DeviceClass.DATA:
-        decls.ints.add(d.raw)
-        return d.raw
+        name = _ident(d.raw)
+        decls.ints.add(name)
+        return name
     if c == DeviceClass.FILE:
-        decls.retain_ints.add(d.raw)
-        return d.raw
+        name = _ident(d.raw)
+        decls.retain_ints.add(name)
+        return name
     if c == DeviceClass.CONST:
         return str(d.number)
     if c == DeviceClass.HCONST:
@@ -125,6 +138,11 @@ class _CondStack:
             stack.append(f"(*EDGE {op.value}*){e}")
         elif op in (Op.AND, Op.ANI, Op.ANDP, Op.ANDF):
             e = _var(ops[0], decls)
+            if op in (Op.ANDP, Op.ANDF):
+                self.notes.append(
+                    f"step {ins.step}: edge {op.value} {ops[0].raw} — "
+                    f"needs R_TRIG/F_TRIG instance; emitted as level AND")
+                e = f"(*EDGE {op.value}*){e}"
             if op in (Op.ANI,):
                 e = f"NOT {e}"
             stack.append(f"({stack.pop()} AND {e})" if stack else e)

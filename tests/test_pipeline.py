@@ -271,6 +271,80 @@ def test_parse_source_never_reads_files_by_default():
         raised = True
     assert raised
 
+def test_parse_source_root_confinement():
+    import os
+    from plc_mcp.server import _resolve_source
+    os.environ["PLC_MCP_SOURCE_ROOT"] = "/nonexistent_root_xyz"
+    try:
+        try:
+            _resolve_source("/etc/hostname", True)
+            raised = False
+        except ValueError:
+            raised = True
+        assert raised  # outside the configured root -> refused
+    finally:
+        del os.environ["PLC_MCP_SOURCE_ROOT"]
+
+def test_gen_alarm_bundle_bad_types_no_crash():
+    # review finding: non-integer priority/delays must surface as
+    # validation errors, never raise out of the tool
+    from plc_mcp import library as lib
+    out = lib.gen_alarm_bundle([
+        {"tag": "A", "class": "FAULT", "priority": "high"},
+        {"tag": "B", "class": "WARNING", "on_delay_ms": "soon"},
+    ])
+    assert out["ok"] is False
+    assert any("priority" in e for e in out["errors"])
+    assert any("on_delay_ms" in e for e in out["errors"])
+
+# ---- Siemens S7 AWL input (v0.4) -------------------------------------------
+
+from plc_mcp.parsers.siemens_awl import parse_siemens_awl
+
+def _awl_prog():
+    src = (pathlib.Path(__file__).resolve().parents[1] /
+           "samples/s7_conveyor_excerpt.awl").read_text()
+    return parse_siemens_awl(src, name="CONVEYOR")
+
+def test_awl_parse_basics():
+    p = _awl_prog()
+    assert p.source_dialect == "s7_awl"
+    assert p.symbols["E0.0"].startswith("START")
+    # SLW is unknown; the T after it must NOT silently become a MOV
+    assert p.meta["unknown_mnemonics"] == 2
+    assert p.meta["instruction_count"] > 20
+
+def test_awl_bool_and_groups_emit():
+    st = emit_st(_awl_prog())
+    # bracket group: (E0.0 OR M10.0) AND E0.2
+    assert "xDO_A4_0 := ((xDI_E0_0 OR M10_0) AND xDI_E0_2);" in st
+    # bare-O AND-groups: (M10.0 AND NOT E0.2) OR (NOT M10.0 AND E0.1)
+    assert ("xDO_A4_1 := ((M10_0 AND NOT xDI_E0_2) OR "
+            "(NOT M10_0 AND xDI_E0_1));") in st
+    # S5T#3S -> TON preset 3000 ms
+    assert "tT5(IN := M10_0, PT := T#3000ms);" in st
+    # L/T pair -> guarded MOV
+    assert "IF M10_0 THEN MW22 := MW20; END_IF;" in st
+    # SET/RST survive
+    assert "IF (xDI_E0_0 AND (*EDGE ANDP*)M10_1) THEN M10_0 := TRUE;" in st
+
+def test_awl_hazard_flags():
+    f = flag_semantics(_awl_prog())
+    codes = {fl["code"] for fl in f["flags"]}
+    assert "H12-S5-TIMER" in codes        # SE T5
+    assert "H7-COND-JUMP" in codes        # SPB FLT1
+    assert "H7-CALL" in codes             # CALL FC5
+    assert "H4-MC-ZONE" in codes          # MCR( zone
+    assert "H9-UNKNOWN-MNEMONIC" in codes # SLW 4
+    assert f["summary"]["safety_screening_limited"] is False
+
+def test_awl_to_scl_pragma():
+    st = emit_st(_awl_prog())
+    scl = emit_scl(st)
+    assert "FUNCTION_BLOCK" in scl
+    assert ("tT5 {InstructionName := 'TON'; LibVersion := '1.0'} : TON;"
+            in scl)
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

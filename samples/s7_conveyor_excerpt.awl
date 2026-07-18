@@ -1,0 +1,66 @@
+[SYMBOLS]
+E0.0   START pushbutton
+E0.1   STOP pushbutton
+E0.2   motor protection OK
+A4.0   conveyor contactor
+A4.1   fault lamp
+A4.2   star-delta contactor
+M10.0  run latch
+M10.1  start edge memory
+T5     star-delta transition
+MW20   piece counter raw
+MW22   piece counter copy
+
+[PROGRAM]
+NETWORK
+TITLE=Run latch (set/reset with edge)
+U E0.0
+FP M10.1
+S M10.0
+U E0.1
+UN E0.2
+R M10.0
+NETWORK
+TITLE=Conveyor output with bracket group
+U(
+O E0.0
+O M10.0
+)
+U E0.2
+= A4.0
+NETWORK
+TITLE=Fault lamp: bare-O AND-groups
+U M10.0
+UN E0.2
+O
+UN M10.0
+U E0.1
+= A4.1
+NETWORK
+TITLE=Star-delta timer (S5 on-delay)
+U M10.0
+L S5T#3S
+SE T5
+U T5
+= A4.2
+NETWORK
+TITLE=Piece counter copy
+U M10.0
+L MW20
+T MW22
+NETWORK
+TITLE=Jump, call, MCR zone
+U E0.1
+SPB FLT1
+CALL FC5
+U M10.0
+MCR(
+U E0.0
+= A4.3
+)MCR
+NETWORK
+TITLE=Exotic accumulator op stays visible
+L MW20
+SLW 4
+T MW24
+BE
