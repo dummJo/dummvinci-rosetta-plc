@@ -4,8 +4,10 @@ version = "0.3.0"
 description = "Rosetta Stone for PLC dialects — deterministic cross-vendor migration engineering (MELSEC -> CODESYS-family: ABB AC500 V3, CODESYS V3.5, Beckhoff TwinCAT 3, Schneider Machine Expert, WAGO; Siemens SCL seed). Translates faithfully; never guesses on semantics. DummVinci / PTTS."
 readme = "README.md"
 requires-python = ">=3.10"
-# server.py uses the mcp 1.x FastMCP API; mcp 2.x removed mcp.server.fastmcp
-dependencies = ["mcp>=1.0.0,<2", "pydantic>=2.0"]
+# server.py targets mcp 2.x (MCPServer) and falls back to the 1.x FastMCP
+# import. 1.14 is the oldest 1.x that registers these tools (bisected: 1.13.1
+# and earlier fail); CI tests both the 1.14.0 floor and the latest 2.x.
+dependencies = ["mcp>=1.14,<3", "pydantic>=2.0"]
 
 [project.optional-dependencies]
 # XSD validation of emitted PLCopen XML (rosetta-plc validate-xml)

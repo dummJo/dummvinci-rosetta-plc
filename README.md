@@ -206,11 +206,11 @@ enforces its own discipline.
 
 ```bash
 pip install -e ".[dev]"     # tool + test evidence deps (pytest, lxml, blark)
-pip install -e .            # runtime only (mcp<2, pydantic)
+pip install -e .            # runtime only (mcp, pydantic)
 ```
 
-`mcp` is pinned below 2: the server uses the 1.x `FastMCP` API, which mcp 2.x
-removed.
+The server runs on mcp 2.x (`MCPServer`) and on mcp 1.x from 1.14 (`FastMCP`);
+a clean install resolves 2.x. Older 1.x releases cannot register these tools.
 
 Add to your project `.mcp.json` (or `claude mcp add`):
 
@@ -300,8 +300,8 @@ This project refuses to overstate itself. Status is tracked in
 only with **recorded evidence** (a named test or command output), never on
 inspection alone.
 
-**Verified (v0.3 — 61 named tests, `scripts/verify.sh` = VERIFY OK on
-Python 3.10 and 3.11):**
+**Verified (v0.3 — 63 named tests, `scripts/verify.sh` = VERIFY OK on
+Python 3.10–3.12 with mcp 2.x, and on Python 3.10 with mcp 1.14):**
 parser incl. ANB/ORB blocks and MPS branches · xref · H1–H12 flagging · I/O map ·
 ST emission (edges, PLF, RST on T/C, timer/counter values, first-scan flag) ·
 structured PLCopen projects **XSD-valid against the official TC6 v2.01 schema**
@@ -334,6 +334,8 @@ lost a branch · every coil of an MPS/MRD/MPP or series-output rung got the
   type-check. Only the IDE does.
 - 🟡 **SCL emitter is a Phase-3 seed.** It emits, but `IEC_TIMER` instance DBs
   are still manual. Not a production Siemens path yet — honestly labeled as such.
+- 🟡 **MCP client on mcp 2.x.** The server is tested over stdio with raw JSON-RPC
+  (protocol `2025-06-18`), not yet driven by Claude Code against an mcp 2.x install.
 
 Anyone claiming this tool is "compile-ready" or "certified equal to the vendor
 toolchain" is misreading it. It is a **force multiplier for a competent
@@ -376,7 +378,8 @@ python -m pytest -q                # same tests under pytest
 ROSETTA_REQUIRE_OPTIONAL=1 bash scripts/verify.sh   # as CI: a missing lxml/blark fails instead of SKIP
 ```
 
-CI (`.github/workflows/verify.yml`) runs both on Python 3.10–3.12.
+CI (`.github/workflows/verify.yml`) runs both on Python 3.10–3.12 with mcp 2.x,
+plus Python 3.10 with mcp 1.14.0, the oldest supported 1.x.
 
 The sample [`samples/centrifugal_excerpt.il`](./samples/centrifugal_excerpt.il)
 deliberately reproduces the hazard patterns from the Tsukishima TSK-E-130-0402

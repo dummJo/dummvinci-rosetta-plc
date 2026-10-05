@@ -30,7 +30,14 @@ from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel, Field, ConfigDict
-from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+
+try:  # mcp 2.x renamed FastMCP to MCPServer
+    from mcp.server.mcpserver import MCPServer
+except ModuleNotFoundError as e:  # mcp 1.x; any other import failure is real
+    if e.name != "mcp.server.mcpserver":
+        raise
+    from mcp.server.fastmcp import FastMCP as MCPServer
 
 from .ir import Program, Rung, Instruction, Device, Op
 from .parsers.melsec import parse_melsec_il
@@ -45,10 +52,22 @@ from .emitters.project import ProjectOptions, emit_project
 from .build import BuildError, build_from_config, build_programs
 from .targets import DEFAULT_TARGET, list_targets
 
-mcp = FastMCP("dummvinci-rosetta-plc")
+mcp = MCPServer("dummvinci-rosetta-plc")
 
 # In-memory program store so tools can chain without re-passing megabytes.
 _STORE: dict[str, Program] = {}
+
+
+def _read_only(title: str) -> ToolAnnotations:
+    return ToolAnnotations(title=title, readOnlyHint=True,
+                           destructiveHint=False, idempotentHint=True,
+                           openWorldHint=False)
+
+
+def _writes_disk(title: str) -> ToolAnnotations:
+    return ToolAnnotations(title=title, readOnlyHint=False,
+                           destructiveHint=True, idempotentHint=True,
+                           openWorldHint=False)
 
 
 def _program_from_json(data: dict) -> Program:
@@ -89,9 +108,8 @@ class ParseInput(BaseModel):
         "win; disagreements are reported as symbol_conflicts."))
 
 
-@mcp.tool(name="plc_parse_melsec", annotations={
-    "title": "Parse MELSEC IL export", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_parse_melsec",
+          annotations=_read_only("Parse MELSEC IL export"))
 async def plc_parse_melsec(params: ParseInput) -> str:
     """Parse a Mitsubishi GX Developer/GX Works instruction-list text export
     into the vendor-neutral IR. Returns a summary + stores the program under
@@ -130,9 +148,8 @@ class ProgramRef(BaseModel):
     program_id: str = Field("MAIN", description="Id from plc_parse_melsec")
 
 
-@mcp.tool(name="plc_device_xref", annotations={
-    "title": "Device cross-reference", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_device_xref",
+          annotations=_read_only("Device cross-reference"))
 async def plc_device_xref(params: ProgramRef) -> str:
     """Build the full device cross-reference: for every device, where it is
     read, written (OUT/SET/RST/MOV...), symbol name, plus automatic
@@ -142,9 +159,8 @@ async def plc_device_xref(params: ProgramRef) -> str:
     return json.dumps(build_xref(_get_program(params.program_id)), indent=2)
 
 
-@mcp.tool(name="plc_flag_semantics", annotations={
-    "title": "Semantic hazard flags ([VERIFY] register)", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_flag_semantics",
+          annotations=_read_only("Semantic hazard flags ([VERIFY] register)"))
 async def plc_flag_semantics(params: ProgramRef) -> str:
     """Generate the assumption register: every construct whose meaning does
     not survive mechanical translation (always-OFF disables, MC/MCR zones,
@@ -162,9 +178,8 @@ class MapIoInput(ProgramRef):
         "do_dc_modules, do_relay_modules, relay_y_ranges."))
 
 
-@mcp.tool(name="plc_map_io", annotations={
-    "title": "Map I/O to AC500 modules", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_map_io",
+          annotations=_read_only("Map I/O to AC500 modules"))
 async def plc_map_io(params: MapIoInput) -> str:
     """Propose a channel-by-channel mapping of legacy X/Y devices onto ABB
     S500 modules, with automatic electrical hazard notes (sink->source
@@ -188,9 +203,8 @@ class EmitStInput(ProgramRef):
         "MELSEC timer base in ms (A-series low-speed timers: 100)"))
 
 
-@mcp.tool(name="plc_emit_st", annotations={
-    "title": "Emit draft Structured Text", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_emit_st",
+          annotations=_read_only("Emit draft Structured Text"))
 async def plc_emit_st(params: EmitStInput) -> str:
     """Emit draft IEC 61131-3 Structured Text for ABB AC500 V3 / CODESYS.
     Evaluates the MELSEC stack machine into boolean expressions; converts
@@ -212,9 +226,8 @@ class EmitXmlInput(BaseModel):
     target: str = Field(DEFAULT_TARGET, description="Target profile id")
 
 
-@mcp.tool(name="plc_emit_plcopen_xml", annotations={
-    "title": "Wrap ST into PLCopen XML", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_emit_plcopen_xml",
+          annotations=_read_only("Wrap ST into PLCopen XML"))
 async def plc_emit_plcopen_xml(params: EmitXmlInput) -> str:
     """Wrap ST from plc_emit_st into a structured PLCopen TC6 POU:
     declarations become typed interface variables, only statements go into
@@ -230,9 +243,8 @@ class EmitSclInput(BaseModel):
     fb_name: str = Field("FB_Converted", max_length=64)
 
 
-@mcp.tool(name="plc_emit_scl", annotations={
-    "title": "Emit Siemens SCL external source", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_emit_scl",
+          annotations=_read_only("Emit Siemens SCL external source"))
 async def plc_emit_scl(params: EmitSclInput) -> str:
     """Convert generated ST into a Siemens SCL external-source skeleton for
     TIA Portal ('Generate blocks from source'). SCL differences that cannot
@@ -246,9 +258,8 @@ class LintInput(BaseModel):
     st_code: str = Field(..., description="ST/SCL code to lint")
 
 
-@mcp.tool(name="plc_lint_st", annotations={
-    "title": "Structural lint of generated code", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_lint_st",
+          annotations=_read_only("Structural lint of generated code"))
 async def plc_lint_st(params: LintInput) -> str:
     """Structural checks on generated code: IF/END_IF and VAR/END_VAR
     pairing, unresolved TODO [Hx] markers, UNTRANSLATED/UNMAPPED leftovers.
@@ -264,9 +275,8 @@ class ReportInput(ProgramRef):
     profile_json: Optional[str] = Field(None, description="Optional I/O profile JSON (see plc_map_io)")
 
 
-@mcp.tool(name="plc_generate_report", annotations={
-    "title": "Generate migration analysis report", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_generate_report",
+          annotations=_read_only("Generate migration analysis report"))
 async def plc_generate_report(params: ReportInput) -> str:
     """Generate the full markdown migration analysis report: parse summary,
     semantic hazard register with per-item required actions, I/O mapping
@@ -280,9 +290,8 @@ async def plc_generate_report(params: ReportInput) -> str:
                            target=params.target, io_profile=profile)
 
 
-@mcp.tool(name="plc_list_targets", annotations={
-    "title": "List target platforms and libraries", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_list_targets",
+          annotations=_read_only("List target platforms and libraries"))
 async def plc_list_targets() -> str:
     """List target profiles: CODESYS-family platforms (ABB AC500 V3,
     CODESYS V3.5, Beckhoff TwinCAT 3, Schneider Machine Expert, WAGO),
@@ -292,9 +301,8 @@ async def plc_list_targets() -> str:
     return json.dumps(list_targets(), indent=2)
 
 
-@mcp.tool(name="plc_list_programs", annotations={
-    "title": "List loaded programs", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_list_programs",
+          annotations=_read_only("List loaded programs"))
 async def plc_list_programs() -> str:
     """List programs parsed in this server session (program_id, size,
     unknown mnemonics, symbol conflicts) for multi-program projects."""
@@ -326,9 +334,8 @@ def _project_items(ids: list[str]):
     return [(p, flag_semantics(p)) for p in (_get_program(i) for i in ids)]
 
 
-@mcp.tool(name="plc_emit_plcopen_project", annotations={
-    "title": "Emit multi-POU PLCopen project", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_emit_plcopen_project",
+          annotations=_read_only("Emit multi-POU PLCopen project"))
 async def plc_emit_plcopen_project(params: ProjectEmitInput) -> str:
     """Emit a structured PLCopen TC6 project for a CODESYS-family target:
     GVL_IO / GVL_MEM / GVL_RETAIN, one PROGRAM per segment plus a main
@@ -354,13 +361,8 @@ class ExportInput(ProjectEmitInput):
         "Optional I/O profile JSON for the iomap worksheet"))
 
 
-_WRITE_ANNOTATIONS = {
-    "readOnlyHint": False, "destructiveHint": True, "idempotentHint": True,
-    "openWorldHint": False}
-
-
-@mcp.tool(name="plc_export_project", annotations={
-    "title": "Export project bundle to disk", **_WRITE_ANNOTATIONS})
+@mcp.tool(name="plc_export_project",
+          annotations=_writes_disk("Export project bundle to disk"))
 async def plc_export_project(params: ExportInput) -> str:
     """Write the full bundle for loaded programs: PLCopen XML, per-POU ST,
     per-program analysis (flags, xref, iomap CSV, report), libraries.json,
@@ -404,8 +406,8 @@ class BuildInput(BaseModel):
         "Allow writing into a non-empty foreign directory"))
 
 
-@mcp.tool(name="plc_build_project", annotations={
-    "title": "Build project bundle from config", **_WRITE_ANNOTATIONS})
+@mcp.tool(name="plc_build_project",
+          annotations=_writes_disk("Build project bundle from config"))
 async def plc_build_project(params: BuildInput) -> str:
     """Batch path for big projects: read a JSON project config (programs,
     device-comment files, target, naming, segmentation, library pins) and
