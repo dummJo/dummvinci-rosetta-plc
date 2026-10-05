@@ -1,0 +1,21 @@
+{
+  "project": "JMR_DSI_Retrofit_demo",
+  "target": "abb_ac500_v3",
+  "naming": "legacy",
+  "max_networks_per_pou": 4,
+  "timer_base_ms": 100,
+  "output_dir": "../build/jmr_demo",
+  "programs": [
+    {
+      "id": "CENTRIFUGAL1",
+      "source": "centrifugal_excerpt.il",
+      "dialect": "melsec_a",
+      "symbols": "centrifugal_comments.csv"
+    },
+    {
+      "id": "BLOCKS",
+      "source": "stack_blocks.il",
+      "dialect": "melsec_a"
+    }
+  ]
+}
