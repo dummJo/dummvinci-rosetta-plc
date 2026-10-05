@@ -56,7 +56,10 @@ def test_emit_st_and_lint():
 def test_counter_ctu():
     p = _prog()
     st = emit_st(p, flag_semantics(p))
-    assert "cC10(CU :=" in st and "PV := D279" in st
+    # CODESYS Standard CTU.PV is WORD -> explicit conversion of the INT
+    # register (generic IEC target keeps "PV := D279", see
+    # test_stack_semantics.test_generic_target_ctu_preset_is_int)
+    assert "cC10(CU :=" in st and "PV := INT_TO_WORD(D279)" in st
     assert "cC10 : CTU;" in st
     assert "cC10 : TON" not in st
 

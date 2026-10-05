@@ -1,13 +1,21 @@
 [project]
 name = "dummvinci-rosetta-plc"
-version = "0.2.0"
-description = "Rosetta Stone for PLC dialects — deterministic cross-vendor migration engineering (MELSEC -> ABB AC500 V3, Siemens SCL seed). Translates faithfully; never guesses on semantics. DummVinci / PTTS."
+version = "0.3.0"
+description = "Rosetta Stone for PLC dialects — deterministic cross-vendor migration engineering (MELSEC -> CODESYS-family: ABB AC500 V3, CODESYS V3.5, Beckhoff TwinCAT 3, Schneider Machine Expert, WAGO; Siemens SCL seed). Translates faithfully; never guesses on semantics. DummVinci / PTTS."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["mcp>=1.0.0", "pydantic>=2.0"]
+# server.py uses the mcp 1.x FastMCP API; mcp 2.x removed mcp.server.fastmcp
+dependencies = ["mcp>=1.0.0,<2", "pydantic>=2.0"]
+
+[project.optional-dependencies]
+# XSD validation of emitted PLCopen XML (rosetta-plc validate-xml)
+validate = ["lxml>=4.9"]
+# everything the test suite uses as evidence: XSD validation + ST grammar
+dev = ["pytest>=7", "lxml>=4.9", "blark>=0.8"]
 
 [project.scripts]
 dummvinci-rosetta-plc = "plc_mcp.server:main"
+rosetta-plc = "plc_mcp.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -15,3 +23,10 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+plc_mcp = ["schemas/*.xsd", "schemas/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]

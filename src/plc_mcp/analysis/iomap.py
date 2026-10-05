@@ -26,6 +26,27 @@ DEFAULT_PROFILE = {
     # Y ranges (hex) that drive AC loads on the legacy A1SY22 triac cards.
     # Dossier: Y0C0-Y0DF = solenoids/bell/contactors (2x A1SY22).
     "relay_y_ranges": [(0xC0, 0xDF)],
+    "profile_name": "AC500 S500 (JMR/DSI dossier BOM)",
+    "di_note": "DI524 expects PNP/source wiring — verify field common",
+    "do_relay_note": "relay contact for AC load",
+    "do_dc_note": ("POLARITY: legacy A1SY41 is sink (NPN), DO524 is source "
+                   "(PNP) — re-reference load to 0V"),
+}
+
+# Vendor-neutral profile for non-ABB targets: one large channel pool per
+# direction and no module-specific electrical claims. Supply a real profile
+# (profile_json / io_profile) once the new I/O hardware is chosen.
+GENERIC_PROFILE = {
+    "di_modules": [{"name": "DI", "channels": 4096}],
+    "do_dc_modules": [{"name": "DO", "channels": 4096}],
+    "do_relay_modules": [],
+    "relay_y_ranges": [],
+    "profile_name": "generic (no hardware profile supplied)",
+    "di_note": ("verify sensor type (PNP/NPN/dry contact) against the new "
+                "input module"),
+    "do_relay_note": "relay contact for AC load",
+    "do_dc_note": ("verify output polarity (sink/source) against the legacy "
+                   "card and the new module"),
 }
 
 
@@ -35,6 +56,8 @@ def _in_ranges(n: int, ranges) -> bool:
 
 def map_io(prog: Program, profile: dict | None = None) -> dict[str, Any]:
     p = {**DEFAULT_PROFILE, **(profile or {})}
+    # tuples arrive as lists from JSON profiles
+    p["relay_y_ranges"] = [tuple(r) for r in p["relay_y_ranges"]]
     xref = build_xref(prog)
     xs = sorted((d for d in xref["devices"]
                  if d.startswith("X") and not d.startswith("XX")),
@@ -57,7 +80,7 @@ def map_io(prog: Program, profile: dict | None = None) -> dict[str, Any]:
             "legacy": dev, "symbol": xref["devices"][dev]["symbol"],
             "direction": "DI", "module": slot[0], "channel": slot[1],
             "iec_var": f"xDI_{dev}",
-            "note": "DI524 expects PNP/source wiring — verify field common",
+            "note": p["di_note"],
         })
 
     # outputs, split relay vs DC by configured ranges
@@ -78,7 +101,7 @@ def map_io(prog: Program, profile: dict | None = None) -> dict[str, Any]:
     for i, dev in enumerate(relay_devs):
         slot = relay_slots[i] if i < len(relay_slots) else ("UNMAPPED", -1)
         sym = xref["devices"][dev]["symbol"]
-        note = "relay contact for AC load"
+        note = p["do_relay_note"]
         if any(h in sym.upper() for h in HIGH_CYCLE_HINTS):
             note = ("HIGH-CYCLE output — fit SSR interposing relay to avoid "
                     "contact wear (dossier item 10)")
@@ -91,14 +114,12 @@ def map_io(prog: Program, profile: dict | None = None) -> dict[str, Any]:
                         "symbol": xref["devices"][dev]["symbol"],
                         "direction": "DO_DC", "module": slot[0],
                         "channel": slot[1], "iec_var": f"xDO_{dev}",
-                        "note": ("POLARITY: legacy A1SY41 is sink (NPN), "
-                                 "DO524 is source (PNP) — re-reference load "
-                                 "to 0V")})
+                        "note": p["do_dc_note"]})
 
     warnings.append("Every mapping row is a proposal — cold I/O checkout "
                     "against the wiring diagram is mandatory (dossier item 13a).")
     return {
-        "summary": {"di_used": len(xs), "do_relay_used": len(relay_devs),
+        "summary": {"profile": p["profile_name"], "di_used": len(xs), "do_relay_used": len(relay_devs),
                     "do_dc_used": len(dc_devs),
                     "di_capacity": len(di_slots),
                     "do_relay_capacity": len(relay_slots),

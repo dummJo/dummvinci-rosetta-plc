@@ -19,7 +19,12 @@ This encodes the lessons of the Tsukishima dossier (Section 4):
   H8  Multiple OUT coils on one device  -> scan-order dependency risk.
   H9  Unknown mnemonics                 -> parser gap or exotic instruction.
   H10 RST on wide ranges / FMOV K0      -> bulk memory wipe, guard carefully.
-  H11 SAFETY-RELATED function            -> OUT OF SCOPE. Not a translation
+  H12 Wide results / register pairs     -> 16-bit * writes a 32-bit product
+                                           to Dn:Dn+1, / writes the remainder
+                                           to Dn+1, 32-bit ops (D+, DMOV, D*,
+                                           LDD= ...) use pairs. The draft is
+                                           16-bit: aliasing must be decided.
+  H11 SAFETY-RELATED function           -> OUT OF SCOPE. Not a translation
                                             problem: safety-instrumented
                                             functions belong in a certified
                                             functional-safety toolchain, never
@@ -80,6 +85,61 @@ def _flag(code: str, severity: str, step: int, detail: str,
           action: str) -> dict[str, Any]:
     return {"code": code, "severity": severity, "step": step,
             "detail": detail, "required_action": action}
+
+
+_WORD_REGS = (DeviceClass.DATA, DeviceClass.FILE)
+_WIDE_DEST = {Op.MUL: 2, Op.DIV: 2, Op.DMUL: 2, Op.DDIV: 2,
+              Op.DADD: -1, Op.DSUB: -1, Op.DMOV: 1}
+_WIDE_ACTION = ("Decide the width: declare the pair as one DINT (LINT for "
+                "D* products) and check every independent use of the upper "
+                "word elsewhere (aliasing). The draft declares 16-bit INT and "
+                "truncates.")
+
+
+def _pair(d, offset: int = 1) -> str:
+    # D/R prefix + next word number (index modifier V is not part of it)
+    return f"{d.dclass.value}{d.number + offset}"
+
+
+def _wide_result(instr) -> str | None:
+    """Detail text if this instruction reads/writes more than the 16-bit
+    word the draft declares, else None."""
+    op, ops = instr.op, instr.operands
+    if op in CMP_OPS:
+        parts = instr.raw.split()
+        form = parts[1].upper() if len(parts) > 1 else ""
+        if form.startswith(("LDD", "ANDD", "ORD")):
+            regs = [d for d in ops if d.dclass in _WORD_REGS]
+            if regs:
+                return ("32-bit compare " + form + " on " + ", ".join(
+                    f"{d.raw}:{_pair(d)}" for d in regs) + ".")
+        return None
+    if op not in _WIDE_DEST or not ops:
+        return None
+    idx = _WIDE_DEST[op]
+    if op in (Op.MUL, Op.DIV, Op.DMUL, Op.DDIV) and len(ops) < 3:
+        idx = -1
+    try:
+        dest = ops[idx]
+    except IndexError:
+        return None
+    if dest.dclass not in _WORD_REGS or dest.number is None:
+        return None
+    lo, hi = dest.raw, _pair(dest)
+    if op is Op.MUL:
+        return (f"16-bit * stores a 32-bit product in {lo}:{hi}; the draft "
+                f"keeps only {lo}.")
+    if op is Op.DIV:
+        return (f"16-bit / stores the quotient in {lo} and the remainder in "
+                f"{hi}; the draft drops the remainder.")
+    if op is Op.DMUL:
+        return (f"32-bit D* stores a 64-bit product in {lo}..{_pair(dest, 3)}"
+                f"; the draft keeps 16 bits.")
+    if op is Op.DDIV:
+        return (f"32-bit D/ stores quotient {lo}:{hi} and remainder "
+                f"{_pair(dest, 2)}:{_pair(dest, 3)}; the draft keeps 16 bits.")
+    return (f"32-bit {op.value} operates on the pair {lo}:{hi}; the draft "
+            f"declares {lo} as 16-bit INT.")
 
 
 def flag_semantics(prog: Program) -> dict[str, Any]:
@@ -172,6 +232,11 @@ def flag_semantics(prog: Program) -> dict[str, Any]:
                     f"FMOV K0 bulk clear: {' '.join(x.raw for x in instr.operands)}.",
                     "Confirm which retained banks this wipes and guard the "
                     "trigger condition explicitly."))
+
+            wide = _wide_result(instr)
+            if wide:
+                flags.append(_flag("H12-WIDE-RESULT", "MAJOR", instr.step,
+                                   wide, _WIDE_ACTION))
 
         for step, d in contact_specials:
             flags.append(_flag(

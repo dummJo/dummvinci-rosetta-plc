@@ -3,6 +3,7 @@
 ## Start Here
 - Read `feature_list.json` — current state, what passes, what does not.
 - Read latest file in `docs/handoff/` if present.
+- `pip install -e ".[dev]"` (lxml + blark give the XSD / ST-grammar evidence).
 - Run `bash scripts/verify.sh` before AND after any change.
 
 ## Hard Rules
@@ -21,6 +22,8 @@
   (test name / command output), never on inspection alone.
 - New source dialects or emitters require: sample input in `samples/`,
   tests in `tests/`, and an entry in `feature_list.json` — before code.
+- New target platforms go in `src/plc_mcp/targets.py`. A platform that is not
+  CODESYS-based (e.g. Rockwell Logix) is a new emitter, not a profile flag.
 - Do not mark work complete if `scripts/verify.sh` fails.
 
 ## End of Session

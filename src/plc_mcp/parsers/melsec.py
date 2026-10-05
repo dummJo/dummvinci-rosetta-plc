@@ -18,12 +18,23 @@ This parser targets the A-series dialect first (project JMR/DSI) but the
 grammar is shared with Q/FX list exports for the instruction subset we
 support. Unknown instructions are preserved as Op.UNKNOWN so nothing is
 silently dropped — they surface in flag_semantics.
+
+Network boundaries: an LD-type instruction starts a new network only when it
+follows an output/applied instruction with no MPS branch open. An LD that
+follows contacts opens a parallel block (closed later by ANB/ORB) and stays
+in the same network — splitting there would silently drop the block.
 """
 from __future__ import annotations
 
 import re
 from ..ir import (Program, Rung, Instruction, Device, Op,
                  CONTACT_OPS, COIL_OPS, CMP_OPS, APPLIED_OPS)
+
+# Instructions that only build the logic result; anything else is an action
+# (coil, applied instruction, MC/MCR, unknown) that may end a network.
+_LOGIC_OPS = CONTACT_OPS | CMP_OPS | {Op.ANB, Op.ORB, Op.MPS, Op.MRD,
+                                      Op.MPP, Op.NOP}
+_LD_OPS = {Op.LD, Op.LDI, Op.LDP, Op.LDF}
 
 _CMP_MAP = {
     "LD=": Op.CMP_EQ, "LD<>": Op.CMP_NE, "LD>": Op.CMP_GT,
@@ -66,6 +77,8 @@ def parse_melsec_il(text: str, name: str = "MAIN",
     in_symbols = False
     pending_comment = ""
     unknown_count = 0
+    prev_op: Op | None = None   # last non-NOP instruction in current rung
+    mps_depth = 0
 
     for lineno, line in enumerate(text.splitlines(), 1):
         stripped = line.strip()
@@ -114,16 +127,34 @@ def parse_melsec_il(text: str, name: str = "MAIN",
         if op is Op.UNKNOWN:
             instr.raw = f"{stripped}  <<UNKNOWN MNEMONIC '{m.group(2)}'>>"
 
-        rung_start = op in (Op.LD, Op.LDI, Op.LDP, Op.LDF) or (
-            op in CMP_OPS and m.group(2).upper().startswith(("LD",)))
-        # MC/MCR/END/CJ pointer labels start their own network too
+        is_load = op in _LD_OPS or (
+            op in CMP_OPS and m.group(2).upper().startswith("LD"))
         if op in (Op.MCR, Op.END):
-            rung_start = True
+            rung_start = True       # MCR/END stand as their own network
+        elif is_load:
+            # block-start LD (after contacts) or LD inside an open MPS
+            # branch belongs to the current network
+            rung_start = (prev_op is not None
+                          and prev_op not in _LOGIC_OPS and mps_depth == 0)
+        else:
+            rung_start = False
         if rung_start or current is None:
             current = Rung(start_step=step, comment=pending_comment)
             pending_comment = ""
+            prev_op, mps_depth = None, 0
             prog.rungs.append(current)
+        elif pending_comment:
+            # comment inside a network: keep it with that network
+            current.comment = "; ".join(
+                c for c in (current.comment, pending_comment) if c)
+            pending_comment = ""
         current.instructions.append(instr)
+        if op is Op.MPS:
+            mps_depth += 1
+        elif op is Op.MPP:
+            mps_depth = max(0, mps_depth - 1)
+        if op is not Op.NOP:
+            prev_op = op
 
     prog.meta["instruction_count"] = sum(
         len(r.instructions) for r in prog.rungs)

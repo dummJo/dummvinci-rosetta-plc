@@ -83,6 +83,22 @@ costs more than money. Extend the patterns in
 `src/plc_mcp/analysis/semantics.py` (`_SAFETY_PATTERNS`) as project vocabulary
 grows — never narrow them to silence a flag.
 
+## Where the boundary shows up in the output
+
+The boundary is enforced on every output path, not only the single-POU draft:
+
+- `plc_emit_st`: `SAFETY BOUNDARY HIT` banner + `TODO [H11-SAFETY-BOUNDARY]`
+  at each affected network.
+- Project emitter / bundle: the banner is at the top of **every** POU (segments
+  and main), inside the PLCopen body as well, so it survives import.
+  `SAFETY_BOUNDARY.md` lists every H11 hit, `MANIFEST.json` carries
+  `"safety_boundary": true`, and the CLI / export tools return **exit code 3**
+  so CI cannot treat the build as clean.
+- Device comments imported from an external CSV are matched exactly like
+  inline `[SYMBOLS]`. Moving safety text out of the listing does not hide it
+  (`tests/test_symbols.py::test_external_safety_comment_still_trips_h11`).
+- No target profile — CODESYS family or otherwise — changes any of this.
+
 ---
 
 *If in doubt, the boundary holds: the tool flags, a certified engineer decides.*
