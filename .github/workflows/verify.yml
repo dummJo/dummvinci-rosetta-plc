@@ -9,6 +9,11 @@ jobs:
       fail-fast: false
       matrix:
         python: ["3.10", "3.11", "3.12"]
+        mcp: ["mcp>=2,<3"]
+        include:
+          # oldest supported 1.x: keeps the FastMCP fallback import honest
+          - python: "3.10"
+            mcp: "mcp==1.14.0"
     env:
       ROSETTA_REQUIRE_OPTIONAL: "1"   # XSD + ST-grammar evidence must run
     steps:
@@ -16,6 +21,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev]" "${{ matrix.mcp }}"
+      - run: python -c "import importlib.metadata as m; print('mcp', m.version('mcp'))"
       - run: bash scripts/verify.sh
       - run: python -m pytest -q

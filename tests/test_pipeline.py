@@ -1,6 +1,7 @@
 import json, sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
+from _util import run_module
 from plc_mcp.parsers.melsec import parse_melsec_il
 from plc_mcp.analysis.xref import build_xref
 from plc_mcp.analysis.semantics import flag_semantics
@@ -115,6 +116,4 @@ def test_safety_banner_in_emitted_st():
     assert "TODO [H11-SAFETY-BOUNDARY" in st
 
 if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_"):
-            fn(); print("PASS", name)
+    run_module(globals())
