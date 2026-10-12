@@ -1,10 +1,10 @@
 [project]
 name = "dummvinci-rosetta-plc"
-version = "0.2.0"
+version = "0.2.1"
 description = "Rosetta Stone for PLC dialects — deterministic cross-vendor migration engineering (MELSEC -> ABB AC500 V3, Siemens SCL seed). Translates faithfully; never guesses on semantics. DummVinci / PTTS."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["mcp>=1.0.0", "pydantic>=2.0"]
+dependencies = ["mcp>=1.30,<3", "pydantic>=2.11,<3"]
 
 [project.scripts]
 dummvinci-rosetta-plc = "plc_mcp.server:main"
@@ -15,3 +15,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[project.optional-dependencies]
+test = ["pytest>=7,<10", "build>=1,<2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

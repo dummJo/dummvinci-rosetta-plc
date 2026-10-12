@@ -9,7 +9,7 @@ from plc_mcp.emitters.st import emit_st
 from plc_mcp.emitters.plcopen import emit_plcopen_xml, emit_scl, lint_st
 
 SRC = (pathlib.Path(__file__).resolve().parents[1] /
-       "samples/centrifugal_excerpt.il").read_text()
+       "samples/process_excerpt.il").read_text()
 
 def _prog():
     return parse_melsec_il(SRC, name="TEST")
@@ -106,10 +106,13 @@ def test_safety_boundary_detected():
 
 def test_safety_banner_in_emitted_st():
     p = _safety_prog()
-    st = emit_st(p, flag_semantics(p))
-    assert "SAFETY BOUNDARY HIT" in st
-    assert "AC500-S" in st
-    assert "TODO [H11-SAFETY-BOUNDARY" in st
+    try:
+        emit_st(p, flag_semantics(p))
+    except ValueError as exc:
+        assert "SAFETY BOUNDARY HIT" in str(exc)
+        assert "AC500-S" in str(exc)
+    else:
+        raise AssertionError("H11 must refuse code emission")
 
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):

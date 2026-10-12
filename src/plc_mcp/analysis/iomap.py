@@ -1,6 +1,6 @@
 """I/O mapping: Mitsubishi X/Y devices -> ABB AC500 S500 module channels.
 
-Default hardware profile mirrors the JMR/DSI centrifugal dossier BOM:
+Default hardware profile mirrors the pilot centrifugal retrofit BOM:
   DI524 x2   (64 DI)               <- X inputs
   DO524 x1   (32 DO, 24VDC source) <- Y DC outputs (lamps, drive cmds)
   DX522 x4   (32 relay outputs)    <- Y AC loads (solenoids, contactors)
@@ -33,17 +33,75 @@ def _in_ranges(n: int, ranges) -> bool:
     return any(lo <= n <= hi for lo, hi in ranges)
 
 
+def _profile(profile: dict | None) -> dict:
+    """Validate configuration structure; no electrical ratings are guessed."""
+    if profile is not None and not isinstance(profile, dict):
+        raise ValueError("I/O profile must be a JSON object")
+    unknown = set(profile or {}) - set(DEFAULT_PROFILE)
+    if unknown:
+        raise ValueError(f"Unknown I/O profile keys: {sorted(unknown)}")
+    result = {**DEFAULT_PROFILE, **(profile or {})}
+    names = set()
+    for key in ("di_modules", "do_dc_modules", "do_relay_modules"):
+        if not isinstance(result[key], list):
+            raise ValueError(f"{key} must be a list of module objects")
+        for module in result[key]:
+            if not isinstance(module, dict):
+                raise ValueError(f"Each {key} module must be an object")
+            name, channels = module.get("name"), module.get("channels")
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(f"Each {key} module needs a nonempty name")
+            if type(channels) is not int or channels < 0:
+                raise ValueError(f"{key} channels must be a nonnegative integer")
+            if name in names:
+                raise ValueError(f"Duplicate I/O module name: {name}")
+            names.add(name)
+    ranges = result["relay_y_ranges"]
+    if not isinstance(ranges, (list, tuple)):
+        raise ValueError("relay_y_ranges must be a list of [low, high] pairs")
+    for bounds in ranges:
+        if (not isinstance(bounds, (list, tuple)) or len(bounds) != 2
+                or any(type(value) is not int for value in bounds)
+                or bounds[0] < 0 or bounds[0] > bounds[1]):
+            raise ValueError("relay_y_ranges needs nonnegative integer "
+                             "[low, high] pairs with low <= high")
+    return result
+
+
 def map_io(prog: Program, profile: dict | None = None) -> dict[str, Any]:
-    p = {**DEFAULT_PROFILE, **(profile or {})}
+    p = _profile(profile)
     xref = build_xref(prog)
-    xs = sorted((d for d in xref["devices"]
-                 if d.startswith("X") and not d.startswith("XX")),
-                key=lambda d: int(d[1:], 16))
-    ys = sorted((d for d in xref["devices"] if d.startswith("Y")),
-                key=lambda d: int(d[1:], 16))
+
+    def _hexnum(d: str) -> int | None:
+        try:
+            return int(d[1:], 16)
+        except ValueError:
+            return None
 
     mapping: list[dict[str, Any]] = []
     warnings: list[str] = []
+
+    # Non-hex X/Y tokens (symbolic operands, parser artifacts) go to an
+    # explicit verify bucket instead of crashing the whole mapping.
+    odd = [d for d in xref["devices"]
+           if d.startswith(("X", "Y"))
+           and _hexnum(d) is None]
+    for dev in odd:
+        mapping.append({"legacy": dev,
+                        "symbol": xref["devices"][dev]["symbol"],
+                        "direction": "UNKNOWN", "module": "UNMAPPED",
+                        "channel": -1, "iec_var": f"x_{dev}",
+                        "note": "non-hex X/Y token — verify manually"})
+    if odd:
+        warnings.append(f"{len(odd)} X/Y token(s) with non-hex address "
+                        f"routed to UNMAPPED — verify: {', '.join(odd)}")
+
+    xs = sorted((d for d in xref["devices"]
+                 if d.startswith("X") and _hexnum(d) is not None),
+                key=_hexnum)
+    ys = sorted((d for d in xref["devices"]
+                 if d.startswith("Y") and _hexnum(d) is not None),
+                key=_hexnum)
 
     # inputs
     di_slots = [(m["name"], ch) for m in p["di_modules"]

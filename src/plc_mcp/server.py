@@ -19,11 +19,21 @@ it flags them.
 from __future__ import annotations
 
 import json
+from functools import wraps
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, ConfigDict
-from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+
+try:
+    from mcp.server.mcpserver import MCPServer
+    from mcp.server.mcpserver.exceptions import ToolError
+except ModuleNotFoundError as exc:
+    if exc.name != "mcp.server.mcpserver":
+        raise
+    from mcp.server.fastmcp import FastMCP as MCPServer
+    from mcp.server.fastmcp.exceptions import ToolError
 
 from .ir import Program, Rung, Instruction, Device, Op
 from .parsers.melsec import parse_melsec_il
@@ -34,7 +44,21 @@ from .analysis.report import generate_report
 from .emitters.st import emit_st
 from .emitters.plcopen import emit_plcopen_xml, emit_scl, lint_st
 
-mcp = FastMCP("dummvinci-rosetta-plc")
+mcp = MCPServer("dummvinci-rosetta-plc")
+
+def _tool_errors(function):
+    """Expose expected input/refusal errors without SDK 2 masking their reason."""
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        try:
+            return await function(*args, **kwargs)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        except OSError as exc:
+            reason = exc.strerror or "filesystem access error"
+            raise ToolError(f"Cannot access the requested source file: {reason}") from exc
+    return wrapped
+
 
 # In-memory program store so tools can chain without re-passing megabytes.
 _STORE: dict[str, Program] = {}
@@ -65,18 +89,22 @@ def _get_program(program_id: str) -> Program:
 class ParseInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=False, extra="forbid")
     source: str = Field(..., description=(
-        "Either the raw MELSEC instruction-list text, OR a filesystem path "
-        "to the exported .il/.txt file. Paths are detected by existence."))
+        "Raw MELSEC instruction-list text by default; set source_is_path "
+        "to read an explicit UTF-8 exported .il/.txt file."), min_length=1,
+        max_length=8_000_000)
+    source_is_path: bool = Field(False, description=(
+        "Explicit opt-in to read source as a local UTF-8 file path."))
     program_id: str = Field("MAIN", description=(
         "Identifier to store the parsed program under, for chaining "
         "(e.g. 'jmr_centrifugal_1')"), min_length=1, max_length=64)
-    dialect: str = Field("melsec_a", description=(
+    dialect: Literal["melsec_a", "melsec_q"] = Field("melsec_a", description=(
         "Source dialect: 'melsec_a' (A/AnS series) or 'melsec_q'"))
 
 
-@mcp.tool(name="plc_parse_melsec", annotations={
-    "title": "Parse MELSEC IL export", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_parse_melsec", annotations=ToolAnnotations(
+    title='Parse MELSEC IL export', readOnlyHint=True,
+    destructiveHint=False, idempotentHint=True, openWorldHint=False))
+@_tool_errors
 async def plc_parse_melsec(params: ParseInput) -> str:
     """Parse a Mitsubishi GX Developer/GX Works instruction-list text export
     into the vendor-neutral IR. Returns a summary + stores the program under
@@ -84,12 +112,15 @@ async def plc_parse_melsec(params: ParseInput) -> str:
     inline comments, compare contacts (LD= ...), applied instructions.
     Unknown mnemonics are preserved and surfaced — never dropped."""
     text = params.source
-    p = Path(params.source)
-    try:
-        if len(params.source) < 512 and p.exists():
-            text = p.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        pass
+    if params.source_is_path:
+        p = Path(params.source).expanduser()
+        if not p.is_file():
+            raise ValueError("source_is_path requires an existing regular file")
+        if p.stat().st_size > 8_000_000:
+            raise ValueError("source file exceeds the 8 MB limit")
+        text = p.read_text(encoding="utf-8-sig")
+        if len(text) > 8_000_000:
+            raise ValueError("source text exceeds the 8 million character limit")
     prog = parse_melsec_il(text, name=params.program_id,
                            dialect=params.dialect)
     _STORE[params.program_id] = prog
@@ -107,9 +138,10 @@ class ProgramRef(BaseModel):
     program_id: str = Field("MAIN", description="Id from plc_parse_melsec")
 
 
-@mcp.tool(name="plc_device_xref", annotations={
-    "title": "Device cross-reference", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_device_xref", annotations=ToolAnnotations(
+    title='Device cross-reference', readOnlyHint=True,
+    destructiveHint=False, idempotentHint=True, openWorldHint=False))
+@_tool_errors
 async def plc_device_xref(params: ProgramRef) -> str:
     """Build the full device cross-reference: for every device, where it is
     read, written (OUT/SET/RST/MOV...), symbol name, plus automatic
@@ -119,9 +151,10 @@ async def plc_device_xref(params: ProgramRef) -> str:
     return json.dumps(build_xref(_get_program(params.program_id)), indent=2)
 
 
-@mcp.tool(name="plc_flag_semantics", annotations={
-    "title": "Semantic hazard flags ([VERIFY] register)", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_flag_semantics", annotations=ToolAnnotations(
+    title='Semantic hazard flags ([VERIFY] register)', readOnlyHint=True,
+    destructiveHint=False, idempotentHint=True, openWorldHint=False))
+@_tool_errors
 async def plc_flag_semantics(params: ProgramRef) -> str:
     """Generate the assumption register: every construct whose meaning does
     not survive mechanical translation (always-OFF disables, MC/MCR zones,
@@ -139,9 +172,10 @@ class MapIoInput(ProgramRef):
         "do_dc_modules, do_relay_modules, relay_y_ranges."))
 
 
-@mcp.tool(name="plc_map_io", annotations={
-    "title": "Map I/O to AC500 modules", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_map_io", annotations=ToolAnnotations(
+    title='Map I/O to AC500 modules', readOnlyHint=True,
+    destructiveHint=False, idempotentHint=True, openWorldHint=False))
+@_tool_errors
 async def plc_map_io(params: MapIoInput) -> str:
     """Propose a channel-by-channel mapping of legacy X/Y devices onto ABB
     S500 modules, with automatic electrical hazard notes (sink->source
@@ -156,9 +190,10 @@ class EmitStInput(ProgramRef):
     pou_name: str = Field("PRG_Converted", max_length=64)
 
 
-@mcp.tool(name="plc_emit_st", annotations={
-    "title": "Emit draft Structured Text", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_emit_st", annotations=ToolAnnotations(
+    title='Emit draft Structured Text', readOnlyHint=True,
+    destructiveHint=False, idempotentHint=True, openWorldHint=False))
+@_tool_errors
 async def plc_emit_st(params: EmitStInput) -> str:
     """Emit draft IEC 61131-3 Structured Text for ABB AC500 V3 / CODESYS.
     Evaluates the MELSEC stack machine into boolean expressions; converts
@@ -177,9 +212,10 @@ class EmitXmlInput(BaseModel):
     project_name: str = Field("ptts_migration", max_length=64)
 
 
-@mcp.tool(name="plc_emit_plcopen_xml", annotations={
-    "title": "Wrap ST into PLCopen XML", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_emit_plcopen_xml", annotations=ToolAnnotations(
+    title='Wrap ST into PLCopen XML', readOnlyHint=True,
+    destructiveHint=False, idempotentHint=True, openWorldHint=False))
+@_tool_errors
 async def plc_emit_plcopen_xml(params: EmitXmlInput) -> str:
     """Wrap generated ST into a PLCopen TC6 XML document for import into
     ABB Automation Builder (or any PLCopen-capable IEC IDE)."""
@@ -193,9 +229,10 @@ class EmitSclInput(BaseModel):
     fb_name: str = Field("FB_Converted", max_length=64)
 
 
-@mcp.tool(name="plc_emit_scl", annotations={
-    "title": "Emit Siemens SCL external source", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_emit_scl", annotations=ToolAnnotations(
+    title='Emit Siemens SCL external source', readOnlyHint=True,
+    destructiveHint=False, idempotentHint=True, openWorldHint=False))
+@_tool_errors
 async def plc_emit_scl(params: EmitSclInput) -> str:
     """Convert generated ST into a Siemens SCL external-source skeleton for
     TIA Portal ('Generate blocks from source'). SCL differences that cannot
@@ -209,9 +246,10 @@ class LintInput(BaseModel):
     st_code: str = Field(..., description="ST/SCL code to lint")
 
 
-@mcp.tool(name="plc_lint_st", annotations={
-    "title": "Structural lint of generated code", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_lint_st", annotations=ToolAnnotations(
+    title='Structural lint of generated code', readOnlyHint=True,
+    destructiveHint=False, idempotentHint=True, openWorldHint=False))
+@_tool_errors
 async def plc_lint_st(params: LintInput) -> str:
     """Structural checks on generated code: IF/END_IF and VAR/END_VAR
     pairing, unresolved TODO [Hx] markers, UNTRANSLATED/UNMAPPED leftovers.
@@ -225,9 +263,10 @@ class ReportInput(ProgramRef):
     prepared_by: str = Field("dummvinci-rosetta-plc", max_length=64)
 
 
-@mcp.tool(name="plc_generate_report", annotations={
-    "title": "Generate migration analysis report", "readOnlyHint": True,
-    "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+@mcp.tool(name="plc_generate_report", annotations=ToolAnnotations(
+    title='Generate migration analysis report', readOnlyHint=True,
+    destructiveHint=False, idempotentHint=True, openWorldHint=False))
+@_tool_errors
 async def plc_generate_report(params: ReportInput) -> str:
     """Generate the full markdown migration analysis report: parse summary,
     semantic hazard register with per-item required actions, I/O mapping

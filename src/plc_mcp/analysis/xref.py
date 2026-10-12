@@ -28,11 +28,16 @@ def build_xref(prog: Program) -> dict[str, Any]:
                 if d.dclass not in (DeviceClass.CONST, DeviceClass.HCONST):
                     reads[d.raw].append(instr.step)
         elif instr.op in COIL_OPS:
-            for d in instr.operands:
+            for index, d in enumerate(instr.operands):
                 if d.dclass in (DeviceClass.CONST, DeviceClass.HCONST):
                     continue  # timer preset constant
-                writes[d.raw].append({"step": instr.step,
-                                      "kind": instr.op.value})
+                if index == 0:
+                    writes[d.raw].append({"step": instr.step,
+                                          "kind": instr.op.value})
+                else:
+                    # Register-driven timer/counter presets are read,
+                    # never written by the output instruction.
+                    reads[d.raw].append(instr.step)
         elif instr.op in APPLIED_OPS:
             wpos = _WRITE_POSITIONS.get(instr.op, [])
             for idx, d in enumerate(instr.operands):

@@ -1,0 +1,35 @@
+name: Verify installed package
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.12", "3.13"]
+        mcp: ["mcp>=2,<3", "mcp==1.30.0"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install package and test dependencies
+        run: python -m pip install ".[test]" "${{ matrix.mcp }}"
+      - name: Verify
+        shell: bash
+        env:
+          PYTHON: python
+        run: bash scripts/verify.sh
+      - name: Build distributions
+        run: python -m build

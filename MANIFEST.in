@@ -1,0 +1,6 @@
+include LICENSE README.md SAFETY.md feature_list.json .mcp.json.example
+recursive-include samples *.il
+recursive-include scripts *.py *.sh
+recursive-include tests *.py
+recursive-include docs *.md
+exclude .mcp.json
