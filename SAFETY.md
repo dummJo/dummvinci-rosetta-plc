@@ -12,9 +12,18 @@ everything it cannot translate faithfully. Safety-instrumented functions —
 emergency stop, overload / load-moment protection, anti-two-block, overhoist,
 guard interlocks, safe-torque-off, watchdogs, any function whose failure can
 injure a person — are **out of scope by design**. When the tool detects one it
-raises `H11-SAFETY-BOUNDARY` as a **BLOCKER**, stamps the emitted code with a
-`SAFETY BOUNDARY HIT` banner, and stops. That is the correct behavior, not a
-limitation to be worked around.
+raises `H11-SAFETY-BOUNDARY` as a **BLOCKER** and refuses emission before
+rendering any program. The MCP result explains `SAFETY BOUNDARY HIT` and the
+certified hand-off; it does not return executable safety logic. Requested
+output names and identifiable safety text in raw wrapper inputs are also
+screened conservatively. That is the correct behavior, not a limitation to
+be worked around.
+
+Screening is text-based, not a safety proof. Missing or incomplete device
+symbols are marked as reduced coverage; absence of a detection is never
+safety clearance. XML/SCL wrappers also reject earlier H11-marked exports.
+
+*Behavior updated: 2026-10-12 — refusal replaces the older warning-only output.*
 
 ## Why an MCP / codegen tool cannot deliver "SIL-rated" code
 

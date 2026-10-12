@@ -1,13 +1,139 @@
 [
-  {"id":"parse-melsec-a","description":"Parse GX Developer A-series IL text export incl. symbols, compare contacts, applied instructions","verification":["python3 tests/test_pipeline.py :: test_parse_counts"],"passes":true,"evidence":"test_parse_counts PASS v0.2"},
-  {"id":"xref","description":"Device cross-reference with double-coil / write-only / read-only detection","verification":["test_xref_detects_reads_writes"],"passes":true,"evidence":"PASS v0.2"},
-  {"id":"flags-h1-h10","description":"Semantic hazard register H1-H10 with severity + required actions","verification":["test_flags"],"passes":true,"evidence":"PASS v0.2"},
-  {"id":"iomap-ac500","description":"X/Y to AC500 S500 channel mapping with electrical hazard notes","verification":["test_iomap"],"passes":true,"evidence":"PASS v0.2"},
-  {"id":"emit-st","description":"Draft ST: stack-machine eval, TON (K + register presets), CTU, SET/RST/PLS, MOV/math, TODO markers at hazard sites","verification":["test_emit_st_and_lint","test_counter_ctu"],"passes":true,"evidence":"PASS v0.2 (counter bug fixed in 0.2)"},
-  {"id":"emit-plcopen","description":"PLCopen TC6 XML wrapper for Automation Builder import","verification":["test_plcopen_and_scl"],"passes":true,"evidence":"PASS v0.2; NOT yet validated against real AB import"},
-  {"id":"emit-scl-seed","description":"Siemens SCL external-source skeleton","verification":["test_plcopen_and_scl"],"passes":false,"evidence":"emits, but timer instancing manual; Phase 3"},
-  {"id":"report","description":"Markdown migration analysis report with BLOCKER sign-off table","verification":["test_report"],"passes":true,"evidence":"PASS v0.2"},
-  {"id":"safety-boundary-h11","description":"H11 safety-boundary detection: flags safety-instrumented functions (e-stop, overload/load-moment, anti-two-block, overhoist, guard interlock, watchdog, STO/PROFIsafe) as BLOCKER; hard 'SAFETY BOUNDARY HIT' banner in emitted ST; report notice; hand-off to certified IEC 61508/61511 toolchain (AC500-S). Conservative, biased to false-positive. Does NOT and must NOT generate safety code.","verification":["test_safety_boundary_detected","test_safety_banner_in_emitted_st","test_no_safety_false_positive_on_process_sample"],"passes":true,"evidence":"PASS v0.2.1: 3 tests green; 6 SIFs detected on marine_crane_safety_excerpt.il, 0 false-positive on centrifugal golden sample"},
-  {"id":"real-export-validation","description":"Parser validated against a REAL GX Developer export from JMR/DSI shutdown","verification":["parse real export with 0 unparsed lines, unknown mnemonics triaged"],"passes":false,"evidence":null},
-  {"id":"ab-import-validation","description":"PLCopen XML validated by actual Automation Builder import","verification":["import in AB 2.x without structural errors"],"passes":false,"evidence":null}
+  {
+    "id": "parse-melsec-a",
+    "description": "Parse GX Developer A-series IL text export incl. symbols, compare contacts, applied instructions",
+    "verification": [
+      "python3 tests/test_pipeline.py :: test_parse_counts"
+    ],
+    "passes": true,
+    "evidence": "test_parse_counts PASS v0.2"
+  },
+  {
+    "id": "xref",
+    "description": "Device cross-reference with double-coil / write-only / read-only detection",
+    "verification": [
+      "test_xref_detects_reads_writes"
+    ],
+    "passes": true,
+    "evidence": "PASS v0.2"
+  },
+  {
+    "id": "flags-h1-h10",
+    "description": "Semantic hazard register H1-H10 with severity + required actions",
+    "verification": [
+      "test_flags"
+    ],
+    "passes": true,
+    "evidence": "PASS v0.2"
+  },
+  {
+    "id": "iomap-ac500",
+    "description": "X/Y to AC500 S500 channel mapping with electrical hazard notes",
+    "verification": [
+      "test_iomap"
+    ],
+    "passes": true,
+    "evidence": "PASS v0.2"
+  },
+  {
+    "id": "emit-st",
+    "description": "Draft ST: stack-machine eval, TON (K + register presets), CTU, SET/RST/PLS, MOV/math, TODO markers at hazard sites",
+    "verification": [
+      "test_emit_st_and_lint",
+      "test_counter_ctu"
+    ],
+    "passes": true,
+    "evidence": "PASS v0.2 (counter bug fixed in 0.2)"
+  },
+  {
+    "id": "emit-plcopen",
+    "description": "PLCopen TC6 XML wrapper for Automation Builder import",
+    "verification": [
+      "test_plcopen_and_scl"
+    ],
+    "passes": true,
+    "evidence": "PASS v0.2; NOT yet validated against real AB import"
+  },
+  {
+    "id": "emit-scl-seed",
+    "description": "Siemens SCL external-source skeleton",
+    "verification": [
+      "test_plcopen_and_scl"
+    ],
+    "passes": false,
+    "evidence": "emits, but timer instancing manual; Phase 3"
+  },
+  {
+    "id": "report",
+    "description": "Markdown migration analysis report with BLOCKER sign-off table",
+    "verification": [
+      "test_report"
+    ],
+    "passes": true,
+    "evidence": "PASS v0.2"
+  },
+  {
+    "id": "safety-boundary-h11",
+    "description": "Text-based H11 screening of symbols, preserved source comments and output names; emission refuses before rendering on detected safety functions. Coverage-unknown diagnostic for absent/incomplete symbols; never certifies safety clearance.",
+    "verification": [
+      "test_h11_screens_underscore_separated_symbols",
+      "test_h11_preserves_and_screens_all_source_comments",
+      "test_original_centrifugal_emergency_comment_is_never_sanitized",
+      "test_stdio_safety_boundary_preserved",
+      "test_raw_st_sif_names_and_comments_are_refused_without_h11_marker",
+      "test_requested_output_names_join_h11_screening",
+      "test_duplicate_symbols_cannot_hide_original_safety_labels"
+    ],
+    "passes": true,
+    "evidence": "2026-10-12: 171-test full suite passes; independent 30/30 case-variant target/raw probes refuse H11. Original source safety labels preserved; ordinary synthetic process pipeline succeeds."
+  },
+  {
+    "id": "real-export-validation",
+    "description": "Parser validated against a REAL GX Developer export from JMR/DSI shutdown",
+    "verification": [
+      "parse real export with 0 unparsed lines, unknown mnemonics triaged"
+    ],
+    "passes": false,
+    "evidence": null
+  },
+  {
+    "id": "ab-import-validation",
+    "description": "PLCopen XML validated by actual Automation Builder import",
+    "verification": [
+      "import in AB 2.x without structural errors"
+    ],
+    "passes": false,
+    "evidence": null
+  },
+  {
+    "id": "claude-install",
+    "description": "Cross-platform isolated installer with absolute interpreter MCP config, protected merge/backup and unrelated-cwd import validation",
+    "verification": [
+      "tests/test_install.py",
+      "python scripts/install.py",
+      "tests/test_mcp.py::test_stdio_installed_console_entrypoint_from_unrelated_cwd"
+    ],
+    "passes": true,
+    "evidence": "2026-10-12: 171 passed + 8 subtests on regular wheel installs (Python 3.12/MCP1.30 and Python3.13/MCP2.3); extracted sdist verify also 171 + 8; real stdio initialize/list/call and installer repeatability verified"
+  },
+  {
+    "id": "mcp-sdk-compatibility",
+    "description": "Latest MCP2 MCPServer plus supported MCP1.30 fallback, typed annotations and useful expected ToolError responses",
+    "verification": [
+      "tests/test_mcp.py",
+      "scripts/verify.sh with MCP1.30 and MCP2.3"
+    ],
+    "passes": true,
+    "evidence": "2026-10-12: 171 passed + 8 subtests on regular wheel installs (Python 3.12/MCP1.30 and Python3.13/MCP2.3); extracted sdist verify also 171 + 8; real stdio initialize/list/call and installer repeatability verified"
+  },
+  {
+    "id": "core-audit-regressions",
+    "description": "Regression fixes for networks/branches, edge FBs, reset drafts, malformed input, identifiers, source preservation and honest unsupported-operation diagnostics",
+    "verification": [
+      "tests/test_core_regressions.py",
+      "tests/test_pipeline.py"
+    ],
+    "passes": true,
+    "evidence": "2026-10-12: 171 passed + 8 subtests on regular wheel installs (Python 3.12/MCP1.30 and Python3.13/MCP2.3); extracted sdist verify also 171 + 8; real stdio initialize/list/call and installer repeatability verified"
+  }
 ]
